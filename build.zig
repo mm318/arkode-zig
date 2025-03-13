@@ -1,275 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const SundialsComponent = struct {
-    name: []const u8,
-    src_files: []const []const u8,
-};
-
-const sundials_libs = [_]SundialsComponent{
-    .{
-        .name = "sundials_core",
-        .src_files = &.{
-            "src/sundials/sundials_adaptcontroller.c",
-            "src/sundials/sundials_band.c",
-            "src/sundials/sundials_context.c",
-            "src/sundials/sundials_dense.c",
-            "src/sundials/sundials_direct.c",
-            "src/sundials/sundials_errors.c",
-            "src/sundials/sundials_futils.c",
-            "src/sundials/sundials_hashmap.c",
-            "src/sundials/sundials_iterative.c",
-            "src/sundials/sundials_linearsolver.c",
-            "src/sundials/sundials_logger.c",
-            "src/sundials/sundials_math.c",
-            "src/sundials/sundials_matrix.c",
-            "src/sundials/sundials_memory.c",
-            "src/sundials/sundials_nonlinearsolver.c",
-            "src/sundials/sundials_nvector_senswrapper.c",
-            "src/sundials/sundials_nvector.c",
-            "src/sundials/sundials_stepper.c",
-            "src/sundials/sundials_profiler.c",
-            "src/sundials/sundials_version.c",
-        },
-    },
-    .{
-        .name = "sundials_sunmemsys",
-        .src_files = &.{"src/sunmemory/system/sundials_system_memory.c"},
-    },
-    .{
-        .name = "sundials_nvecmanyvector",
-        .src_files = &.{"src/nvector/manyvector/nvector_manyvector.c"},
-    },
-    .{
-        .name = "sundials_nvecserial",
-        .src_files = &.{"src/nvector/serial/nvector_serial.c"},
-    },
-    .{
-        .name = "sundials_sunmatrixband",
-        .src_files = &.{"src/sunmatrix/band/sunmatrix_band.c"},
-    },
-    .{
-        .name = "sundials_sunmatrixsparse",
-        .src_files = &.{"src/sunmatrix/sparse/sunmatrix_sparse.c"},
-    },
-    .{
-        .name = "sundials_sunmatrixdense",
-        .src_files = &.{"src/sunmatrix/dense/sunmatrix_dense.c"},
-    },
-    .{
-        .name = "sundials_sunlinsolpcg",
-        .src_files = &.{"src/sunlinsol/pcg/sunlinsol_pcg.c"},
-    },
-    .{
-        .name = "sundials_sunlinsolspgmr",
-        .src_files = &.{"src/sunlinsol/spgmr/sunlinsol_spgmr.c"},
-    },
-    .{
-        .name = "sundials_sunlinsolsptfqmr",
-        .src_files = &.{"src/sunlinsol/sptfqmr/sunlinsol_sptfqmr.c"},
-    },
-    .{
-        .name = "sundials_sunlinsolspfgmr",
-        .src_files = &.{"src/sunlinsol/spfgmr/sunlinsol_spfgmr.c"},
-    },
-    .{
-        .name = "sundials_sunlinsolband",
-        .src_files = &.{"src/sunlinsol/band/sunlinsol_band.c"},
-    },
-    .{
-        .name = "sundials_sunlinsolspbcgs",
-        .src_files = &.{"src/sunlinsol/spbcgs/sunlinsol_spbcgs.c"},
-    },
-    .{
-        .name = "sundials_sunlinsoldense",
-        .src_files = &.{"src/sunlinsol/dense/sunlinsol_dense.c"},
-    },
-    .{
-        .name = "sunnonlinsol_fixedpoint",
-        .src_files = &.{"src/sunnonlinsol/fixedpoint/sunnonlinsol_fixedpoint.c"},
-    },
-    .{
-        .name = "sunnonlinsol_newton",
-        .src_files = &.{"src/sunnonlinsol/newton/sunnonlinsol_newton.c"},
-    },
-
-    .{
-        .name = "sundials_sunadaptcontrollersoderlind",
-        .src_files = &.{"src/sunadaptcontroller/soderlind/sunadaptcontroller_soderlind.c"},
-    },
-    .{
-        .name = "sundials_sunadaptcontrollermrihtol",
-        .src_files = &.{"src/sunadaptcontroller/mrihtol/sunadaptcontroller_mrihtol.c"},
-    },
-    .{
-        .name = "sundials_sunadaptcontrollerimexgus",
-        .src_files = &.{"src/sunadaptcontroller/imexgus/sunadaptcontroller_imexgus.c"},
-    },
-};
-
-const arkode_lib = SundialsComponent{
-    .name = "arkode",
-    .src_files = &.{
-        "src/arkode/arkode_adapt.c",
-        "src/arkode/arkode_arkstep_io.c",
-        "src/arkode/arkode_arkstep_nls.c",
-        "src/arkode/arkode_arkstep.c",
-        "src/arkode/arkode_bandpre.c",
-        "src/arkode/arkode_bbdpre.c",
-        "src/arkode/arkode_butcher_dirk.c",
-        "src/arkode/arkode_butcher_erk.c",
-        "src/arkode/arkode_butcher.c",
-        "src/arkode/arkode_erkstep_io.c",
-        "src/arkode/arkode_erkstep.c",
-        "src/arkode/arkode_forcingstep.c",
-        "src/arkode/arkode_interp.c",
-        "src/arkode/arkode_io.c",
-        "src/arkode/arkode_ls.c",
-        "src/arkode/arkode_lsrkstep_io.c",
-        "src/arkode/arkode_lsrkstep.c",
-        "src/arkode/arkode_mri_tables.c",
-        "src/arkode/arkode_mristep_controller.c",
-        "src/arkode/arkode_mristep_io.c",
-        "src/arkode/arkode_mristep_nls.c",
-        "src/arkode/arkode_mristep.c",
-        "src/arkode/arkode_relaxation.c",
-        "src/arkode/arkode_root.c",
-        "src/arkode/arkode_splittingstep_coefficients.c",
-        "src/arkode/arkode_splittingstep.c",
-        "src/arkode/arkode_sprkstep_io.c",
-        "src/arkode/arkode_sprkstep.c",
-        "src/arkode/arkode_sprk.c",
-        "src/arkode/arkode_sunstepper.c",
-        "src/arkode/arkode_user_controller.c",
-        "src/arkode/arkode.c",
-    },
-};
-
-const arkode_examples = [_]SundialsComponent{
-    .{
-        .name = "ark_brusselator1D_manyvec",
-        .src_files = &.{"examples/arkode/C_manyvector/ark_brusselator1D_manyvec.c"},
-    },
-    .{
-        .name = "ark_analytic",
-        .src_files = &.{"examples/arkode/C_serial/ark_analytic.c"},
-    },
-    .{
-        .name = "ark_advection_diffusion_reaction_splitting",
-        .src_files = &.{"examples/arkode/C_serial/ark_advection_diffusion_reaction_splitting.c"},
-    },
-    .{
-        .name = "ark_analytic_lsrk",
-        .src_files = &.{"examples/arkode/C_serial/ark_analytic_lsrk.c"},
-    },
-    .{
-        .name = "ark_analytic_lsrk_varjac",
-        .src_files = &.{"examples/arkode/C_serial/ark_analytic_lsrk_varjac.c"},
-    },
-    .{
-        .name = "ark_analytic_mels",
-        .src_files = &.{"examples/arkode/C_serial/ark_analytic_mels.c"},
-    },
-    .{
-        .name = "ark_analytic_nonlin",
-        .src_files = &.{"examples/arkode/C_serial/ark_analytic_nonlin.c"},
-    },
-    .{
-        .name = "ark_analytic_partitioned",
-        .src_files = &.{"examples/arkode/C_serial/ark_analytic_partitioned.c"},
-    },
-    .{
-        .name = "ark_analytic_ssprk",
-        .src_files = &.{"examples/arkode/C_serial/ark_analytic_ssprk.c"},
-    },
-    .{
-        .name = "ark_brusselator_1D_mri",
-        .src_files = &.{"examples/arkode/C_serial/ark_brusselator_1D_mri.c"},
-    },
-    .{
-        .name = "ark_brusselator_fp",
-        .src_files = &.{"examples/arkode/C_serial/ark_brusselator_fp.c"},
-    },
-    .{
-        .name = "ark_brusselator_mri",
-        .src_files = &.{"examples/arkode/C_serial/ark_brusselator_mri.c"},
-    },
-    .{
-        .name = "ark_brusselator",
-        .src_files = &.{"examples/arkode/C_serial/ark_brusselator.c"},
-    },
-    .{
-        .name = "ark_brusselator1D_imexmri",
-        .src_files = &.{"examples/arkode/C_serial/ark_brusselator1D_imexmri.c"},
-    },
-    .{
-        .name = "ark_brusselator1D",
-        .src_files = &.{"examples/arkode/C_serial/ark_brusselator1D.c"},
-    },
-    .{
-        .name = "ark_conserved_exp_entropy_ark",
-        .src_files = &.{"examples/arkode/C_serial/ark_conserved_exp_entropy_ark.c"},
-    },
-    .{
-        .name = "ark_conserved_exp_entropy_erk",
-        .src_files = &.{"examples/arkode/C_serial/ark_conserved_exp_entropy_erk.c"},
-    },
-    .{
-        .name = "ark_damped_harmonic_symplectic",
-        .src_files = &.{"examples/arkode/C_serial/ark_damped_harmonic_symplectic.c"},
-    },
-    .{
-        .name = "ark_dissipated_exp_entropy",
-        .src_files = &.{"examples/arkode/C_serial/ark_dissipated_exp_entropy.c"},
-    },
-    .{
-        .name = "ark_harmonic_symplectic",
-        .src_files = &.{"examples/arkode/C_serial/ark_harmonic_symplectic.c"},
-    },
-    .{
-        .name = "ark_heat1D_adapt",
-        .src_files = &.{"examples/arkode/C_serial/ark_heat1D_adapt.c"},
-    },
-    .{
-        .name = "ark_heat1D",
-        .src_files = &.{"examples/arkode/C_serial/ark_heat1D.c"},
-    },
-    .{
-        .name = "ark_kepler",
-        .src_files = &.{"examples/arkode/C_serial/ark_kepler.c"},
-    },
-    .{
-        .name = "ark_kpr_mri",
-        .src_files = &.{"examples/arkode/C_serial/ark_kpr_mri.c"},
-    },
-    .{
-        .name = "ark_KrylovDemo_prec",
-        .src_files = &.{"examples/arkode/C_serial/ark_KrylovDemo_prec.c"},
-    },
-    .{
-        .name = "ark_onewaycouple_mri",
-        .src_files = &.{"examples/arkode/C_serial/ark_onewaycouple_mri.c"},
-    },
-    .{
-        .name = "ark_reaction_diffusion_mri",
-        .src_files = &.{"examples/arkode/C_serial/ark_reaction_diffusion_mri.c"},
-    },
-    .{
-        .name = "ark_robertson_constraints",
-        .src_files = &.{"examples/arkode/C_serial/ark_robertson_constraints.c"},
-    },
-    .{
-        .name = "ark_robertson_root",
-        .src_files = &.{"examples/arkode/C_serial/ark_robertson_root.c"},
-    },
-    .{
-        .name = "ark_robertson",
-        .src_files = &.{"examples/arkode/C_serial/ark_robertson.c"},
-    },
-    .{
-        .name = "ark_twowaycouple_mri",
-        .src_files = &.{"examples/arkode/C_serial/ark_twowaycouple_mri.c"},
-    },
+const c_flags: []const []const u8 = &.{
+    "-std=gnu99",
+    "-g",
+    "-DNDEBUG",
+    "-DSUNDIALS_STATIC_DEFINE",
 };
 
 fn sundials_add_library(
@@ -280,12 +16,15 @@ fn sundials_add_library(
     sources: []const []const u8,
     config_header: *std.Build.Step.ConfigHeader,
 ) *std.Build.Step.Compile {
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
         .name = name,
-        .target = target,
-        .optimize = optimize,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
-    lib.addCSourceFiles(.{ .files = sources });
+    lib.addCSourceFiles(.{ .files = sources, .flags = c_flags });
 
     lib.addConfigHeader(config_header);
     lib.addIncludePath(b.path("include/"));
@@ -307,10 +46,12 @@ fn sundials_add_executable(
 ) *std.Build.Step.Compile {
     const exe = b.addExecutable(.{
         .name = name,
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
-    exe.addCSourceFiles(.{ .files = sources });
+    exe.addCSourceFiles(.{ .files = sources, .flags = c_flags });
 
     exe.addConfigHeader(config_header);
     exe.addIncludePath(b.path("include/"));
@@ -452,7 +193,152 @@ fn configHeader(
         ,
     });
 }
+
+const SundialsComponent = struct {
+    name: []const u8,
+    src_files: []const []const u8,
+};
+
 pub fn build(b: *std.Build) !void {
+    const sundials_libs = [_]SundialsComponent{
+        .{
+            .name = "sundials_core",
+            .src_files = &.{
+                "src/sundials/sundials_adaptcontroller.c",
+                "src/sundials/sundials_band.c",
+                "src/sundials/sundials_context.c",
+                "src/sundials/sundials_dense.c",
+                "src/sundials/sundials_direct.c",
+                "src/sundials/sundials_errors.c",
+                "src/sundials/sundials_futils.c",
+                "src/sundials/sundials_hashmap.c",
+                "src/sundials/sundials_iterative.c",
+                "src/sundials/sundials_linearsolver.c",
+                "src/sundials/sundials_logger.c",
+                "src/sundials/sundials_math.c",
+                "src/sundials/sundials_matrix.c",
+                "src/sundials/sundials_memory.c",
+                "src/sundials/sundials_nonlinearsolver.c",
+                "src/sundials/sundials_nvector_senswrapper.c",
+                "src/sundials/sundials_nvector.c",
+                "src/sundials/sundials_stepper.c",
+                "src/sundials/sundials_profiler.c",
+                "src/sundials/sundials_version.c",
+            },
+        },
+        .{
+            .name = "sundials_sunmemsys",
+            .src_files = &.{"src/sunmemory/system/sundials_system_memory.c"},
+        },
+        .{
+            .name = "sundials_nvecmanyvector",
+            .src_files = &.{"src/nvector/manyvector/nvector_manyvector.c"},
+        },
+        .{
+            .name = "sundials_nvecserial",
+            .src_files = &.{"src/nvector/serial/nvector_serial.c"},
+        },
+        .{
+            .name = "sundials_sunmatrixband",
+            .src_files = &.{"src/sunmatrix/band/sunmatrix_band.c"},
+        },
+        .{
+            .name = "sundials_sunmatrixsparse",
+            .src_files = &.{"src/sunmatrix/sparse/sunmatrix_sparse.c"},
+        },
+        .{
+            .name = "sundials_sunmatrixdense",
+            .src_files = &.{"src/sunmatrix/dense/sunmatrix_dense.c"},
+        },
+        .{
+            .name = "sundials_sunlinsolpcg",
+            .src_files = &.{"src/sunlinsol/pcg/sunlinsol_pcg.c"},
+        },
+        .{
+            .name = "sundials_sunlinsolspgmr",
+            .src_files = &.{"src/sunlinsol/spgmr/sunlinsol_spgmr.c"},
+        },
+        .{
+            .name = "sundials_sunlinsolsptfqmr",
+            .src_files = &.{"src/sunlinsol/sptfqmr/sunlinsol_sptfqmr.c"},
+        },
+        .{
+            .name = "sundials_sunlinsolspfgmr",
+            .src_files = &.{"src/sunlinsol/spfgmr/sunlinsol_spfgmr.c"},
+        },
+        .{
+            .name = "sundials_sunlinsolband",
+            .src_files = &.{"src/sunlinsol/band/sunlinsol_band.c"},
+        },
+        .{
+            .name = "sundials_sunlinsolspbcgs",
+            .src_files = &.{"src/sunlinsol/spbcgs/sunlinsol_spbcgs.c"},
+        },
+        .{
+            .name = "sundials_sunlinsoldense",
+            .src_files = &.{"src/sunlinsol/dense/sunlinsol_dense.c"},
+        },
+        .{
+            .name = "sunnonlinsol_fixedpoint",
+            .src_files = &.{"src/sunnonlinsol/fixedpoint/sunnonlinsol_fixedpoint.c"},
+        },
+        .{
+            .name = "sunnonlinsol_newton",
+            .src_files = &.{"src/sunnonlinsol/newton/sunnonlinsol_newton.c"},
+        },
+
+        .{
+            .name = "sundials_sunadaptcontrollersoderlind",
+            .src_files = &.{"src/sunadaptcontroller/soderlind/sunadaptcontroller_soderlind.c"},
+        },
+        .{
+            .name = "sundials_sunadaptcontrollermrihtol",
+            .src_files = &.{"src/sunadaptcontroller/mrihtol/sunadaptcontroller_mrihtol.c"},
+        },
+        .{
+            .name = "sundials_sunadaptcontrollerimexgus",
+            .src_files = &.{"src/sunadaptcontroller/imexgus/sunadaptcontroller_imexgus.c"},
+        },
+    };
+
+    const arkode_lib = SundialsComponent{
+        .name = "arkode",
+        .src_files = &.{
+            "src/arkode/arkode_adapt.c",
+            "src/arkode/arkode_arkstep_io.c",
+            "src/arkode/arkode_arkstep_nls.c",
+            "src/arkode/arkode_arkstep.c",
+            "src/arkode/arkode_bandpre.c",
+            "src/arkode/arkode_bbdpre.c",
+            "src/arkode/arkode_butcher_dirk.c",
+            "src/arkode/arkode_butcher_erk.c",
+            "src/arkode/arkode_butcher.c",
+            "src/arkode/arkode_erkstep_io.c",
+            "src/arkode/arkode_erkstep.c",
+            "src/arkode/arkode_forcingstep.c",
+            "src/arkode/arkode_interp.c",
+            "src/arkode/arkode_io.c",
+            "src/arkode/arkode_ls.c",
+            "src/arkode/arkode_lsrkstep_io.c",
+            "src/arkode/arkode_lsrkstep.c",
+            "src/arkode/arkode_mri_tables.c",
+            "src/arkode/arkode_mristep_controller.c",
+            "src/arkode/arkode_mristep_io.c",
+            "src/arkode/arkode_mristep_nls.c",
+            "src/arkode/arkode_mristep.c",
+            "src/arkode/arkode_relaxation.c",
+            "src/arkode/arkode_root.c",
+            "src/arkode/arkode_splittingstep_coefficients.c",
+            "src/arkode/arkode_splittingstep.c",
+            "src/arkode/arkode_sprkstep_io.c",
+            "src/arkode/arkode_sprkstep.c",
+            "src/arkode/arkode_sprk.c",
+            "src/arkode/arkode_sunstepper.c",
+            "src/arkode/arkode_user_controller.c",
+            "src/arkode/arkode.c",
+        },
+    };
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -485,7 +371,144 @@ pub fn build(b: *std.Build) !void {
     }
     b.installArtifact(arkode);
 
-    const test_cmdline_target = b.step("test", "Run the tests");
+    build_examples(b, arkode, target, optimize, config_header);
+}
+
+fn build_examples(
+    b: *std.Build,
+    arkode: *std.Build.Step.Compile,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    config_header: *std.Build.Step.ConfigHeader,
+) void {
+    const arkode_examples = [_]SundialsComponent{
+        .{
+            .name = "ark_brusselator1D_manyvec",
+            .src_files = &.{"examples/arkode/C_manyvector/ark_brusselator1D_manyvec.c"},
+        },
+        .{
+            .name = "ark_analytic",
+            .src_files = &.{"examples/arkode/C_serial/ark_analytic.c"},
+        },
+        .{
+            .name = "ark_advection_diffusion_reaction_splitting",
+            .src_files = &.{"examples/arkode/C_serial/ark_advection_diffusion_reaction_splitting.c"},
+        },
+        .{
+            .name = "ark_analytic_lsrk",
+            .src_files = &.{"examples/arkode/C_serial/ark_analytic_lsrk.c"},
+        },
+        .{
+            .name = "ark_analytic_lsrk_varjac",
+            .src_files = &.{"examples/arkode/C_serial/ark_analytic_lsrk_varjac.c"},
+        },
+        .{
+            .name = "ark_analytic_mels",
+            .src_files = &.{"examples/arkode/C_serial/ark_analytic_mels.c"},
+        },
+        .{
+            .name = "ark_analytic_nonlin",
+            .src_files = &.{"examples/arkode/C_serial/ark_analytic_nonlin.c"},
+        },
+        .{
+            .name = "ark_analytic_partitioned",
+            .src_files = &.{"examples/arkode/C_serial/ark_analytic_partitioned.c"},
+        },
+        .{
+            .name = "ark_analytic_ssprk",
+            .src_files = &.{"examples/arkode/C_serial/ark_analytic_ssprk.c"},
+        },
+        .{
+            .name = "ark_brusselator_1D_mri",
+            .src_files = &.{"examples/arkode/C_serial/ark_brusselator_1D_mri.c"},
+        },
+        .{
+            .name = "ark_brusselator_fp",
+            .src_files = &.{"examples/arkode/C_serial/ark_brusselator_fp.c"},
+        },
+        .{
+            .name = "ark_brusselator_mri",
+            .src_files = &.{"examples/arkode/C_serial/ark_brusselator_mri.c"},
+        },
+        .{
+            .name = "ark_brusselator",
+            .src_files = &.{"examples/arkode/C_serial/ark_brusselator.c"},
+        },
+        .{
+            .name = "ark_brusselator1D_imexmri",
+            .src_files = &.{"examples/arkode/C_serial/ark_brusselator1D_imexmri.c"},
+        },
+        .{
+            .name = "ark_brusselator1D",
+            .src_files = &.{"examples/arkode/C_serial/ark_brusselator1D.c"},
+        },
+        .{
+            .name = "ark_conserved_exp_entropy_ark",
+            .src_files = &.{"examples/arkode/C_serial/ark_conserved_exp_entropy_ark.c"},
+        },
+        .{
+            .name = "ark_conserved_exp_entropy_erk",
+            .src_files = &.{"examples/arkode/C_serial/ark_conserved_exp_entropy_erk.c"},
+        },
+        .{
+            .name = "ark_damped_harmonic_symplectic",
+            .src_files = &.{"examples/arkode/C_serial/ark_damped_harmonic_symplectic.c"},
+        },
+        .{
+            .name = "ark_dissipated_exp_entropy",
+            .src_files = &.{"examples/arkode/C_serial/ark_dissipated_exp_entropy.c"},
+        },
+        .{
+            .name = "ark_harmonic_symplectic",
+            .src_files = &.{"examples/arkode/C_serial/ark_harmonic_symplectic.c"},
+        },
+        .{
+            .name = "ark_heat1D_adapt",
+            .src_files = &.{"examples/arkode/C_serial/ark_heat1D_adapt.c"},
+        },
+        .{
+            .name = "ark_heat1D",
+            .src_files = &.{"examples/arkode/C_serial/ark_heat1D.c"},
+        },
+        .{
+            .name = "ark_kepler",
+            .src_files = &.{"examples/arkode/C_serial/ark_kepler.c"},
+        },
+        .{
+            .name = "ark_kpr_mri",
+            .src_files = &.{"examples/arkode/C_serial/ark_kpr_mri.c"},
+        },
+        .{
+            .name = "ark_KrylovDemo_prec",
+            .src_files = &.{"examples/arkode/C_serial/ark_KrylovDemo_prec.c"},
+        },
+        .{
+            .name = "ark_onewaycouple_mri",
+            .src_files = &.{"examples/arkode/C_serial/ark_onewaycouple_mri.c"},
+        },
+        .{
+            .name = "ark_reaction_diffusion_mri",
+            .src_files = &.{"examples/arkode/C_serial/ark_reaction_diffusion_mri.c"},
+        },
+        .{
+            .name = "ark_robertson_constraints",
+            .src_files = &.{"examples/arkode/C_serial/ark_robertson_constraints.c"},
+        },
+        .{
+            .name = "ark_robertson_root",
+            .src_files = &.{"examples/arkode/C_serial/ark_robertson_root.c"},
+        },
+        .{
+            .name = "ark_robertson",
+            .src_files = &.{"examples/arkode/C_serial/ark_robertson.c"},
+        },
+        .{
+            .name = "ark_twowaycouple_mri",
+            .src_files = &.{"examples/arkode/C_serial/ark_twowaycouple_mri.c"},
+        },
+    };
+
+    const run_examples = b.step("examples", "Run the examples");
     for (arkode_examples) |arkode_example| {
         const exe = sundials_add_executable(
             b,
@@ -498,8 +521,7 @@ pub fn build(b: *std.Build) !void {
         );
         b.installArtifact(exe);
 
-        const run_unit_test = b.addRunArtifact(exe);
-        // run_unit_test.has_side_effects = true;
-        test_cmdline_target.dependOn(&run_unit_test.step);
+        const run_example = b.addRunArtifact(exe);
+        run_examples.dependOn(&run_example.step);
     }
 }
