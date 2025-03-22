@@ -3,12 +3,54 @@ const builtin = @import("builtin");
 
 const RunArgs = []const []const u8;
 
-const c_flags: RunArgs = &.{
-    "-std=gnu99",
-    "-g",
+const common_flags: RunArgs = &.{
+    // "-g",
     "-DNDEBUG",
     "-DSUNDIALS_STATIC_DEFINE",
 };
+
+const c_flags: RunArgs = &.{
+    "-std=gnu99",
+};
+
+const cpp_flags: RunArgs = &.{
+    "-std=c++17",
+};
+
+fn is_c(path: []const u8) bool {
+    const extension = std.fs.path.extension(path);
+    return std.ascii.eqlIgnoreCase(extension, ".c");
+}
+
+fn sundials_add_compile_options(
+    b: *std.Build,
+    target: *std.Build.Step.Compile,
+    sources: []const []const u8,
+    config_header: *std.Build.Step.ConfigHeader,
+) void {
+    var has_c = false;
+    var has_cpp = false;
+    for (sources) |source| {
+        if (is_c(source)) {
+            target.addCSourceFile(.{ .file = b.path(source), .flags = common_flags ++ c_flags });
+            has_c = true;
+        } else {
+            target.addCSourceFile(.{ .file = b.path(source), .flags = common_flags ++ cpp_flags });
+            has_cpp = true;
+        }
+    }
+
+    target.addConfigHeader(config_header);
+    target.addIncludePath(b.path("include/"));
+    target.addIncludePath(b.path("src/sundials/"));
+
+    if (has_c) {
+        target.linkLibC();
+    }
+    if (has_cpp) {
+        target.linkLibCpp();
+    }
+}
 
 fn sundials_add_library(
     b: *std.Build,
@@ -26,13 +68,8 @@ fn sundials_add_library(
             .optimize = optimize,
         }),
     });
-    lib.addCSourceFiles(.{ .files = sources, .flags = c_flags });
 
-    lib.addConfigHeader(config_header);
-    lib.addIncludePath(b.path("include/"));
-    lib.addIncludePath(b.path("src/sundials/"));
-
-    lib.linkLibC();
+    sundials_add_compile_options(b, lib, sources, config_header);
 
     return lib;
 }
@@ -53,11 +90,8 @@ fn sundials_add_executable(
             .optimize = optimize,
         }),
     });
-    exe.addCSourceFiles(.{ .files = sources, .flags = c_flags });
 
-    exe.addConfigHeader(config_header);
-    exe.addIncludePath(b.path("include/"));
-
+    sundials_add_compile_options(b, exe, sources, config_header);
     exe.linkLibrary(library);
 
     return exe;
@@ -288,7 +322,6 @@ pub fn build(b: *std.Build) !void {
             .name = "sunnonlinsol_newton",
             .src_files = &.{"src/sunnonlinsol/newton/sunnonlinsol_newton.c"},
         },
-
         .{
             .name = "sundials_sunadaptcontrollersoderlind",
             .src_files = &.{"src/sunadaptcontroller/soderlind/sunadaptcontroller_soderlind.c"},
@@ -374,7 +407,13 @@ pub fn build(b: *std.Build) !void {
     b.installArtifact(arkode);
 
     build_examples(b, arkode, target, optimize, config_header);
+    build_unit_tests(b, arkode, target, optimize, config_header);
 }
+
+const SundialsRunTarget = struct {
+    build_info: SundialsComponent,
+    run_infos: []const RunArgs,
+};
 
 fn build_examples(
     b: *std.Build,
@@ -383,11 +422,6 @@ fn build_examples(
     optimize: std.builtin.OptimizeMode,
     config_header: *std.Build.Step.ConfigHeader,
 ) void {
-    const SundialsRunTarget = struct {
-        build_info: SundialsComponent,
-        run_infos: []const RunArgs,
-    };
-
     const arkode_examples = [_]SundialsRunTarget{
         .{
             .build_info = .{
@@ -710,7 +744,7 @@ fn build_examples(
         },
     };
 
-    const run_examples = b.step("examples", "Run the examples");
+    const run_examples = b.step("examples", "Build and run the examples");
     for (arkode_examples) |arkode_example| {
         const exe = sundials_add_executable(
             b,
@@ -728,6 +762,508 @@ fn build_examples(
             run_example.addArgs(run_info);
             run_example.setCwd(.{ .cwd_relative = b.getInstallPath(.prefix, "") });
             run_examples.dependOn(&run_example.step);
+        }
+    }
+}
+
+fn build_unit_tests(
+    b: *std.Build,
+    arkode: *std.Build.Step.Compile,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    config_header: *std.Build.Step.ConfigHeader,
+) void {
+    const unit_tests = [_]SundialsRunTarget{
+        .{
+            .build_info = .{
+                .name = "test_nvector_manyvector",
+                .src_files = &.{"test/unit_tests/nvector/manyvector/test_nvector_manyvector.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_nvector",
+                .src_files = &.{"test/unit_tests/nvector/test_nvector.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_nvector_serial",
+                .src_files = &.{"test/unit_tests/nvector/serial/test_nvector_serial.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sunnonlinsol_newton",
+                .src_files = &.{"test/unit_tests/sunnonlinsol/newton/test_sunnonlinsol_newton.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sunnonlinsol_fixedpoint",
+                .src_files = &.{"test/unit_tests/sunnonlinsol/fixedpoint/test_sunnonlinsol_fixedpoint.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_profiling",
+                .src_files = &.{"test/unit_tests/profiling/test_profiling.cpp"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sunmemory_sys",
+                .src_files = &.{"test/unit_tests/sunmemory/sys/test_sunmemory_sys.cpp"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sunmatrix_dense",
+                .src_files = &.{"test/unit_tests/sunmatrix/dense/test_sunmatrix_dense.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sunmatrix_band",
+                .src_files = &.{"test/unit_tests/sunmatrix/band/test_sunmatrix_band.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sunmatrix",
+                .src_files = &.{"test/unit_tests/sunmatrix/test_sunmatrix.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        // .{
+        //     .build_info = .{
+        //         .name = "test_sunmatrix_slunrloc",
+        //         .src_files = &.{"test/unit_tests/sunmatrix/slunrloc/test_sunmatrix_slunrloc.cpp"},
+        //     },
+        //     .run_infos = &.{
+        //         &.{},
+        //     },
+        // },
+        .{
+            .build_info = .{
+                .name = "dreadrb",
+                .src_files = &.{"test/unit_tests/sunmatrix/dreadrb.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        // .{
+        //     .build_info = .{
+        //         .name = "test_sunmatrix_onemkldense",
+        //         .src_files = &.{"test/unit_tests/sunmatrix/onemkldense/test_sunmatrix_onemkldense.cpp"},
+        //     },
+        //     .run_infos = &.{
+        //         &.{},
+        //     },
+        // },
+        // .{
+        //     .build_info = .{
+        //         .name = "test_sunmatrix_kokkosdense",
+        //         .src_files = &.{"test/unit_tests/sunmatrix/kokkos/test_sunmatrix_kokkosdense.cpp"},
+        //     },
+        //     .run_infos = &.{
+        //         &.{},
+        //     },
+        // },
+        // .{
+        //     .build_info = .{
+        //         .name = "test_sunmatrix_magmadense",
+        //         .src_files = &.{"test/unit_tests/sunmatrix/magmadense/test_sunmatrix_magmadense.cpp"},
+        //     },
+        //     .run_infos = &.{
+        //         &.{},
+        //     },
+        // },
+        .{
+            .build_info = .{
+                .name = "test_sunmatrix_sparse",
+                .src_files = &.{"test/unit_tests/sunmatrix/sparse/test_sunmatrix_sparse.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sunlinsol_dense",
+                .src_files = &.{"test/unit_tests/sunlinsol/dense/test_sunlinsol_dense.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sunlinsol_band",
+                .src_files = &.{"test/unit_tests/sunlinsol/band/test_sunlinsol_band.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sunlinsol",
+                .src_files = &.{"test/unit_tests/sunlinsol/test_sunlinsol.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sunlinsol_ginkgo",
+                .src_files = &.{"test/unit_tests/sunlinsol/ginkgo/test_sunlinsol_ginkgo.cpp"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        // .{
+        //     .build_info = .{
+        //         .name = "test_sunlinsol_onemkldense",
+        //         .src_files = &.{"test/unit_tests/sunlinsol/onemkldense/test_sunlinsol_onemkldense.cpp"},
+        //     },
+        //     .run_infos = &.{
+        //         &.{},
+        //     },
+        // },
+        .{
+            .build_info = .{
+                .name = "test_sunlinsol_spfgmr_serial",
+                .src_files = &.{"test/unit_tests/sunlinsol/spfgmr/serial/test_sunlinsol_spfgmr_serial.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sunlinsol_spbcgs_serial",
+                .src_files = &.{"test/unit_tests/sunlinsol/spbcgs/serial/test_sunlinsol_spbcgs_serial.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sunlinsol_lapackdense",
+                .src_files = &.{"test/unit_tests/sunlinsol/lapackdense/test_sunlinsol_lapackdense.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sunlinsol_pcg_serial",
+                .src_files = &.{"test/unit_tests/sunlinsol/pcg/serial/test_sunlinsol_pcg_serial.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        // .{
+        //     .build_info = .{
+        //         .name = "test_sunlinsol_kokkosdense",
+        //         .src_files = &.{"test/unit_tests/sunlinsol/kokkos/test_sunlinsol_kokkosdense.cpp"},
+        //     },
+        //     .run_infos = &.{
+        //         &.{},
+        //     },
+        // },
+        .{
+            .build_info = .{
+                .name = "test_sunlinsol_sptfqmr_serial",
+                .src_files = &.{"test/unit_tests/sunlinsol/sptfqmr/serial/test_sunlinsol_sptfqmr_serial.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        // .{
+        //     .build_info = .{
+        //         .name = "test_sunlinsol_superludist",
+        //         .src_files = &.{"test/unit_tests/sunlinsol/superludist/test_sunlinsol_superludist.cpp"},
+        //     },
+        //     .run_infos = &.{
+        //         &.{},
+        //     },
+        // },
+        // .{
+        //     .build_info = .{
+        //         .name = "test_sunlinsol_magmadense",
+        //         .src_files = &.{"test/unit_tests/sunlinsol/magmadense/test_sunlinsol_magmadense.cpp"},
+        //     },
+        //     .run_infos = &.{
+        //         &.{},
+        //     },
+        // },
+        .{
+            .build_info = .{
+                .name = "test_sunlinsol_spgmr_serial",
+                .src_files = &.{"test/unit_tests/sunlinsol/spgmr/serial/test_sunlinsol_spgmr_serial.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        // .{
+        //     .build_info = .{
+        //         .name = "test_sunlinsol_spgmr_parallel",
+        //         .src_files = &.{"test/unit_tests/sunlinsol/spgmr/parallel/test_sunlinsol_spgmr_parallel.c"},
+        //     },
+        //     .run_infos = &.{
+        //         &.{},
+        //     },
+        // },
+        .{
+            .build_info = .{
+                .name = "test_sunlinsol_lapackband",
+                .src_files = &.{"test/unit_tests/sunlinsol/lapackband/test_sunlinsol_lapackband.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "ark_test_arkstepsetforcing",
+                .src_files = &.{"test/unit_tests/arkode/C_serial/ark_test_arkstepsetforcing.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "ark_test_getuserdata",
+                .src_files = &.{"test/unit_tests/arkode/C_serial/ark_test_getuserdata.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "ark_test_tstop",
+                .src_files = &.{"test/unit_tests/arkode/C_serial/ark_test_tstop.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "ark_test_reset",
+                .src_files = &.{"test/unit_tests/arkode/C_serial/ark_test_reset.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "ark_test_splittingstep_coefficients",
+                .src_files = &.{"test/unit_tests/arkode/C_serial/ark_test_splittingstep_coefficients.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "ark_test_interp",
+                .src_files = &.{"test/unit_tests/arkode/C_serial/ark_test_interp.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "ark_test_forcingstep",
+                .src_files = &.{"test/unit_tests/arkode/C_serial/ark_test_forcingstep.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "ark_test_mass",
+                .src_files = &.{"test/unit_tests/arkode/C_serial/ark_test_mass.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "ark_test_innerstepper",
+                .src_files = &.{"test/unit_tests/arkode/C_serial/ark_test_innerstepper.c"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_arkode_error_handling",
+                .src_files = &.{"test/unit_tests/arkode/gtest/test_arkode_error_handling.cpp"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_logging_arkode_forcingstep",
+                .src_files = &.{"test/unit_tests/logging/test_logging_arkode_forcingstep.cpp"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_logging_arkode_splittingstep",
+                .src_files = &.{"test/unit_tests/logging/test_logging_arkode_splittingstep.cpp"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_logging_arkode_arkstep",
+                .src_files = &.{"test/unit_tests/logging/test_logging_arkode_arkstep.cpp"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_logging_arkode_lsrkstep",
+                .src_files = &.{"test/unit_tests/logging/test_logging_arkode_lsrkstep.cpp"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_logging_arkode_mristep",
+                .src_files = &.{"test/unit_tests/logging/test_logging_arkode_mristep.cpp"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_logging_arkode_erkstep",
+                .src_files = &.{"test/unit_tests/logging/test_logging_arkode_erkstep.cpp"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_logging_arkode_sprkstep",
+                .src_files = &.{"test/unit_tests/logging/test_logging_arkode_sprkstep.cpp"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_sundials_errors",
+                .src_files = &.{"test/unit_tests/sundials/test_sundials_errors.cpp"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_reduction_operators",
+                .src_files = &.{"test/unit_tests/sundials/reductions/test_reduction_operators.cpp"},
+            },
+            .run_infos = &.{
+                &.{},
+            },
+        },
+    };
+
+    const run_unit_tests = b.step("test", "Build and run the unit tests");
+    for (unit_tests) |unit_test| {
+        const exe = sundials_add_executable(
+            b,
+            target,
+            optimize,
+            unit_test.build_info.name,
+            unit_test.build_info.src_files,
+            config_header,
+            arkode,
+        );
+
+        for (unit_test.build_info.src_files) |source| {
+            exe.addIncludePath(b.path("src/"));
+            var iter = try std.fs.path.componentIterator(source);
+            _ = iter.next();
+            var path_component = iter.next() orelse @import("std").debug.panic("{s} is not a unit test?", .{source});
+            exe.addIncludePath(b.path(path_component.path)); // adding "./test/unit_tests/" directory
+            path_component = iter.next() orelse @import("std").debug.panic("{s} is not a unit test?", .{source});
+            exe.addIncludePath(b.path(path_component.path)); // adding "./test/unit_tests/<test_group>/" directory
+        }
+
+        b.installArtifact(exe);
+
+        for (unit_test.run_infos) |run_info| {
+            const run_unit_test = b.addRunArtifact(exe);
+            run_unit_test.addArgs(run_info);
+            run_unit_test.setCwd(.{ .cwd_relative = b.getInstallPath(.prefix, "") });
+            run_unit_tests.dependOn(&run_unit_test.step);
         }
     }
 }
