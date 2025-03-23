@@ -820,15 +820,16 @@ fn build_unit_tests(
                 &.{ "2", "0.5" },
             },
         },
-        .{
-            .build_info = .{
-                .name = "test_profiling",
-                .src_files = &.{"test/unit_tests/profiling/test_profiling.cpp"},
-            },
-            .run_infos = &.{
-                &.{},
-            },
-        },
+        // .{
+        //     // needs to be built with SUNDIALS_BUILD_WITH_PROFILING
+        //     .build_info = .{
+        //         .name = "test_profiling",
+        //         .src_files = &.{"test/unit_tests/profiling/test_profiling.cpp"},
+        //     },
+        //     .run_infos = &.{
+        //         &.{},
+        //     },
+        // },
         .{
             .build_info = .{
                 .name = "test_sunmemory_sys",
@@ -968,7 +969,7 @@ fn build_unit_tests(
                 },
             },
             .run_infos = &.{
-                &.{ "100", "1", "100", "1e-14", "0" },
+                &.{ "100", "1", "100", "1e-14", "0" }, // TODO: currently failing to converge (related to Gram-Schmidt orthogonalization type = 1?)
                 &.{ "100", "2", "100", "1e-14", "0" },
             },
         },
@@ -1058,9 +1059,9 @@ fn build_unit_tests(
                 },
             },
             .run_infos = &.{
-                &.{ "100", "1", "1", "100", "1e-14", "0" },
+                &.{ "100", "1", "1", "100", "1e-14", "0" }, // TODO: currently failing to converge (related to Gram-Schmidt orthogonalization type = 1?)
                 &.{ "100", "2", "1", "100", "1e-14", "0" },
-                &.{ "100", "1", "2", "100", "1e-14", "0" },
+                &.{ "100", "1", "2", "100", "1e-14", "0" }, // TODO: currently failing to converge (related to Gram-Schmidt orthogonalization type = 1?)
                 &.{ "100", "2", "2", "100", "1e-14", "0" },
             },
         },
@@ -1266,15 +1267,16 @@ fn build_unit_tests(
                 &.{"1"},
             },
         },
-        .{
-            .build_info = .{
-                .name = "test_sundials_errors",
-                .src_files = &.{"test/unit_tests/sundials/test_sundials_errors.cpp"},
-            },
-            .run_infos = &.{
-                &.{},
-            },
-        },
+        // .{
+        //     // needs to be built with SUNDIALS_ENABLE_ERROR_CHECKS
+        //     .build_info = .{
+        //         .name = "test_sundials_errors",
+        //         .src_files = &.{"test/unit_tests/sundials/test_sundials_errors.cpp"},
+        //     },
+        //     .run_infos = &.{
+        //         &.{},
+        //     },
+        // },
         .{
             .build_info = .{
                 .name = "test_reduction_operators",
@@ -1308,9 +1310,9 @@ fn build_unit_tests(
         exe.addIncludePath(b.path("src/"));
         var iter = try std.fs.path.componentIterator(main_src_file);
         _ = iter.next();
-        var path_component = iter.next() orelse @import("std").debug.panic("{s} is not a unit test?", .{main_src_file});
+        var path_component = iter.next() orelse std.debug.panic("{s} is not a unit test?", .{main_src_file});
         exe.addIncludePath(b.path(path_component.path)); // adding "./test/unit_tests/" directory
-        path_component = iter.next() orelse @import("std").debug.panic("{s} is not a unit test?", .{main_src_file});
+        path_component = iter.next() orelse std.debug.panic("{s} is not a unit test?", .{main_src_file});
         exe.addIncludePath(b.path(path_component.path)); // adding "./test/unit_tests/<test_group>/" directory
 
         // adding include paths for gmock needed by sundials unit test
