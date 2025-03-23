@@ -1,76 +1,62 @@
-# SUNDIALS: SUite of Nonlinear and DIfferential/ALgebraic equation Solvers #
-### Version 7.2.1 (Dec 2024) ###
+# ARKODE
+### Version 6.2.1 (Dec 2024)
 
-**Center for Applied Scientific Computing, Lawrence Livermore National Laboratory**
+**Daniel R. Reynolds,
+  Department of Mathematics, SMU**
 
-SUNDIALS is a family of software packages providing robust and efficient time
-integrators and nonlinear solvers that can easily be incorporated into existing
-simulation codes. The packages are designed to require minimal information from
-the user, allow users to supply their own data structures underneath the
-packages, and enable interfacing with user-supplied or third-party algebraic
-solvers and preconditioners.
+**David J. Gardner, Carol S. Woodward, and Cody J. Balos,
+  Center for Applied Scientific Computing, LLNL**
 
-The SUNDIALS suite consists of the following packages for ordinary differential
-equation (ODE) systems, differential-algebraic equation (DAE) systems, and
-nonlinear algebraic systems:
-
-* ARKODE - for integrating stiff, nonstiff, and multirate ODEs of the form
+ARKODE is a package for the solution of stiff, nonstiff, and multirate ordinary
+differential equation (ODE) systems (initial value problems) given in linearly
+implicit the form
 
   $$M(t) \\, y' = f_1(t,y) + f_2(t,y), \quad y(t_0) = y_0$$
 
-* CVODE - for integrating stiff and nonstiff ODEs of the form
+The integration methods implemented in ARKODE include explicit and implicit
+Runge-Kutta methods, implicit-explicit (IMEX) additive Runge-Kutta methods, and
+multirate infinitesimal (MRI) methods.
 
-  $$y' = f(t,y), \quad y(t_0) = y_0$$
-
-* CVODES - for integrating and sensitivity analysis (forward and adjoint) of
-  ODEs of the form
-
-  $$y' = f(t,y,p), \quad y(t_0) = y_0(p)$$
-
-* IDA - for integrating DAEs of the form
-
-  $$F(t,y,y') = 0, \quad y(t_0) = y_0, \quad y'(t_0) = y_0'$$
-
-* IDAS - for integrating and sensitivity analysis (forward and adjoint) of DAEs
-  of the form
-
-  $$F(t,y,y',p) = 0, \quad y(t_0) = y_0(p), \quad y'(t_0) = y_0'(p)$$
-
-* KINSOL - for solving nonlinear algebraic systems of the form
-
-  $$F(u) = 0 \quad \text{or} \quad G(u) = u$$
+ARKODE is part of a the SUNDIALS Suite of Nonlinear and Differential/Algebraic
+equation Solvers which consists of ARKODE, CVODE, CVODES, IDA, IDAS, and KINSOL.
+It is written in ANSI standard C and can be used in a variety of computing
+environments including serial, shared memory, distributed memory, and
+accelerator-based (e.g., GPU) systems. This flexibility is obtained from a
+modular design that leverages the shared vector, matrix, linear solver, and
+nonlinear solver APIs used across SUNDIALS packages.
 
 ## Installation ##
 
-For installation directions, see the [getting started](https://sundials.readthedocs.io/en/latest/sundials/index.html#getting-started)
-section in the online documentation. In the [released tarballs](https://github.com/LLNL/sundials/releases),
-installation directions are also available in `INSTALL_GUIDE.pdf` and the
-installation chapter of the user guides in the `doc` directory.
+Add the dependency in your `build.zig.zon` by running the following command:
 
-Warning to users who receive more than one of the individual packages at
-different times: Mixing old and new versions of SUNDIALS may fail. To avoid such
-failures, obtain all desired package at the same time.
+```
+zig fetch --save=arkode_zig https://github.com/mm318/arkode-zig/archive/refs/heads/main.tar.gz
+```
 
-## Support ##
+Then, in your `build.zig`:
 
-Full user guides for all of the SUNDIALS packages are available [online](https://sundials.readthedocs.io).
-In the [released tarballs](https://github.com/LLNL/sundials/releases), the `doc`
-directory includes PDFs of the user guides and documentation for the example
-programs. The example program documentation PDFs are also available on the
-[releases page](https://github.com/LLNL/sundials/releases).
+```
+const std = @import("std");
 
-For information on recent changes to SUNDIALS see the [CHANGELOG](./CHANGELOG.md)
-or the introduction chapter of any package user guide.
+pub fn build(b: *std.Build) !void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
 
-A list of Frequently Asked Questions on build and installation procedures as
-well as common usage issues is available on the SUNDIALS
-[FAQ](https://computing.llnl.gov/projects/sundials/faq). For dealing with
-systems with nonphysical solutions or discontinuities see the SUNDIALS
-[usage notes](https://computing.llnl.gov/projects/sundials/usage-notes).
+    const arkode_dep = b.dependency("arkode_zig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const arkode_artifact = arkode_dep.artifact("arkode");
 
-If you have a question not covered in the FAQ or usage notes, please submit your
-question as a [GitHub issue](https://github.com/LLNL/sundials/issues) or to the
-SUNDIALS [mailing list](https://computing.llnl.gov/projects/sundials/mailing-list).
+    const your_exe = b.addExecutable(.{
+        .target = target,
+        .optimize = optimize,
+        // your other options...
+    });
+    your_exe.addIncludePath(arkode_artifact.getEmittedIncludeTree());
+    your_exe.linkLibrary(arkode_artifact);
+}
+```
 
 ## Contributing ##
 
