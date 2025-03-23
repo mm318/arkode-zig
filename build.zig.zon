@@ -5,6 +5,12 @@
     // In a future version of Zig it will be used for package deduplication.
     .version = "6.2.1",
 
+    .dependencies = .{
+        .googletest = .{
+            .path = "deps/googletest",
+        },
+    },
+
     .paths = .{
         "build.zig",
         "build.zig.zon",
