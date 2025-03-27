@@ -404,6 +404,8 @@ pub fn build(b: *std.Build) !void {
     for (libs.items) |sundials_lib| {
         arkode.linkLibrary(sundials_lib);
     }
+    arkode.installHeadersDirectory(b.path("include"), "", .{});
+    arkode.installHeader(config_header.getOutput(), "sundials/sundials_config.h");
     b.installArtifact(arkode);
 
     build_examples(b, arkode, target, optimize, config_header);
