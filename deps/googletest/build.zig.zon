@@ -5,7 +5,7 @@
     .dependencies = .{
         .googletest = .{
             .url = "https://github.com/google/googletest/archive/refs/tags/v1.15.2.tar.gz",
-            .hash = "122001093b5794ecf5a5b53887622c75d633af2b0c3402a266ce45c6aa4d179c53ba",
+            .hash = "N-V-__8AAMpEPQABCTtXlOz1pbU4h2IsddYzrysMNAKiZs5F",
         },
     },
 
