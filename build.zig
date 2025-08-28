@@ -379,8 +379,8 @@ pub fn build(b: *std.Build) !void {
 
     const config_header = configHeader(b, target, optimize);
 
-    var libs = std.ArrayList(*std.Build.Step.Compile).init(b.allocator);
-    defer libs.deinit();
+    var libs = try std.ArrayList(*std.Build.Step.Compile).initCapacity(b.allocator, sundials_libs.len);
+    defer libs.deinit(b.allocator);
     for (sundials_libs) |sundials_lib| {
         const lib = sundials_add_library(
             b,
@@ -390,7 +390,7 @@ pub fn build(b: *std.Build) !void {
             sundials_lib.src_files,
             config_header,
         );
-        try libs.append(lib);
+        try libs.append(b.allocator, lib);
     }
 
     const arkode = sundials_add_library(
