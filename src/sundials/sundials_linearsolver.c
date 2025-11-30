@@ -1,11 +1,14 @@
 /* -----------------------------------------------------------------
- * Programmer(s): Daniel Reynolds @ SMU
+ * Programmer(s): Daniel Reynolds @ UMBC
  *                David J. Gardner, Carol S. Woodward, and
  *                Slaven Peles @ LLNL
  * -----------------------------------------------------------------
  * SUNDIALS Copyright Start
- * Copyright (c) 2002-2024, Lawrence Livermore National Security
+ * Copyright (c) 2025, Lawrence Livermore National Security,
+ * University of Maryland Baltimore County, and the SUNDIALS contributors.
+ * Copyright (c) 2013-2025, Lawrence Livermore National Security
  * and Southern Methodist University.
+ * Copyright (c) 2002-2013, Lawrence Livermore National Security.
  * All rights reserved.
  *
  * See the top-level LICENSE and NOTICE files for details.
@@ -19,11 +22,11 @@
  * -----------------------------------------------------------------*/
 
 #include <stdlib.h>
+#include <string.h>
+
 #include <sundials/priv/sundials_errors_impl.h>
 #include <sundials/sundials_core.h>
 #include <sundials/sundials_errors.h>
-
-#include "sundials_iterative_impl.h"
 #include "sundials_logger_impl.h"
 
 #if defined(SUNDIALS_BUILD_WITH_PROFILING)
@@ -32,6 +35,10 @@ static SUNProfiler getSUNProfiler(SUNLinearSolver S)
   return (S->sunctx->profiler);
 }
 #endif
+
+/* internal function prototypes */
+SUNErrCode sunlsSetFromCommandLine(SUNLinearSolver S, const char* LSid,
+                                   int argc, char* argv[]);
 
 /* -----------------------------------------------------------------
  * Create a new empty SUNLinearSolver object
@@ -62,6 +69,7 @@ SUNLinearSolver SUNLinSolNewEmpty(SUNContext sunctx)
   ops->setatimes         = NULL;
   ops->setpreconditioner = NULL;
   ops->setscalingvectors = NULL;
+  ops->setoptions        = NULL;
   ops->setzeroguess      = NULL;
   ops->initialize        = NULL;
   ops->setup             = NULL;
@@ -96,6 +104,49 @@ void SUNLinSolFreeEmpty(SUNLinearSolver S)
   /* free overall N_Vector object and return */
   free(S);
   return;
+}
+
+/* -----------------------------------------------------------------
+ * internal utility routines
+ * ----------------------------------------------------------------- */
+
+SUNErrCode sunlsSetFromCommandLine(SUNLinearSolver S, const char* LSid,
+                                   int argc, char* argv[])
+{
+  SUNFunctionBegin(S->sunctx);
+
+  /* Prefix for options to set */
+  const char* default_id = "sunlinearsolver";
+  size_t offset          = strlen(default_id) + 1;
+  if (LSid != NULL && strlen(LSid) > 0) { offset = strlen(LSid) + 1; }
+  char* prefix = (char*)malloc(sizeof(char) * (offset + 1));
+  if (LSid != NULL && strlen(LSid) > 0) { strcpy(prefix, LSid); }
+  else { strcpy(prefix, default_id); }
+  strcat(prefix, ".");
+
+  for (int idx = 1; idx < argc; idx++)
+  {
+    int retval;
+
+    /* skip command-line arguments that do not begin with correct prefix */
+    if (strncmp(argv[idx], prefix, strlen(prefix)) != 0) { continue; }
+
+    /* control over ZeroGuess function */
+    if (strcmp(argv[idx] + offset, "zero_guess") == 0)
+    {
+      idx += 1;
+      int iarg = atoi(argv[idx]);
+      retval   = SUNLinSolSetZeroGuess(S, iarg);
+      if (retval != SUN_SUCCESS)
+      {
+        free(prefix);
+        return retval;
+      }
+      continue;
+    }
+  }
+  free(prefix);
+  return SUN_SUCCESS;
 }
 
 /* -----------------------------------------------------------------
@@ -143,6 +194,33 @@ SUNErrCode SUNLinSolSetScalingVectors(SUNLinearSolver S, N_Vector s1, N_Vector s
   SUNDIALS_MARK_FUNCTION_BEGIN(getSUNProfiler(S));
   if (S->ops->setscalingvectors) { ier = S->ops->setscalingvectors(S, s1, s2); }
   else { ier = SUN_SUCCESS; }
+  SUNDIALS_MARK_FUNCTION_END(getSUNProfiler(S));
+  return (ier);
+}
+
+SUNErrCode SUNLinSolSetOptions(SUNLinearSolver S, const char* LSid,
+                               const char* file_name, int argc, char* argv[])
+{
+  SUNErrCode ier = SUN_SUCCESS;
+  if (S == NULL) { return SUN_ERR_ARG_CORRUPT; }
+  SUNFunctionBegin(S->sunctx);
+  SUNDIALS_MARK_FUNCTION_BEGIN(getSUNProfiler(S));
+
+  /* File-based option control is currently unimplemented */
+  SUNAssert((file_name == NULL || strlen(file_name) == 0),
+            SUN_ERR_ARG_INCOMPATIBLE);
+
+  /* First, process all base-class options */
+  if (argc > 0 && argv != NULL)
+  {
+    SUNCheckCall(sunlsSetFromCommandLine(S, LSid, argc, argv));
+  }
+
+  /* Second, ask the implementation to process any remaining options */
+  if (S->ops->setoptions)
+  {
+    ier = S->ops->setoptions(S, LSid, file_name, argc, argv);
+  }
   SUNDIALS_MARK_FUNCTION_END(getSUNProfiler(S));
   return (ier);
 }

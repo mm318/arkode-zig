@@ -6,8 +6,11 @@
 # Acknowledgement: Based on code from Chris White @ LLNL
 # ---------------------------------------------------------------
 # SUNDIALS Copyright Start
-# Copyright (c) 2002-2024, Lawrence Livermore National Security
+# Copyright (c) 2025, Lawrence Livermore National Security,
+# University of Maryland Baltimore County, and the SUNDIALS contributors.
+# Copyright (c) 2013-2025, Lawrence Livermore National Security
 # and Southern Methodist University.
+# Copyright (c) 2002-2013, Lawrence Livermore National Security.
 # All rights reserved.
 #
 # See the top-level LICENSE and NOTICE files for details.
@@ -30,6 +33,7 @@ import sys
 import argparse
 import re
 import datetime
+import math
 
 def main():
     parser = argparse.ArgumentParser(description='Sundials test runner for use in ctest.')
@@ -335,7 +339,7 @@ def intCompare(answer, value, percentage):
     # Check if error between value and answer is greater than the allowed percentage
     if answer == value:
         return True
-    if percentage != 0:
+    if percentage != 0 and answer != 0:
         percentageOff = abs(int(100 - (float(value)/float(answer) * 100)))
         if percentageOff <= percentage:
             return True
@@ -351,10 +355,8 @@ def isFloat(value):
 
 def floatCompare(answer, value, precision):
     # Check if two floating point numbers are the same to a given number of digits
-    if precision == 0:
-        if answer == value:
-            return True
-    elif round(answer, precision) == round(value, precision):
+    tol = 0 if precision == 0 else 10**-precision
+    if math.isclose(answer, value, rel_tol=tol, abs_tol=tol):
         return True
     print("Error: Floating point difference found:\n Value = " + str(value) + ", Answer = " + str(answer) + ", allowance = " + str(precision) + " decimals")
     return False

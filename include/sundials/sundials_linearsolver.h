@@ -1,11 +1,14 @@
 /* -----------------------------------------------------------------
- * Programmer(s): Daniel Reynolds @ SMU
+ * Programmer(s): Daniel Reynolds @ UMBC
  *                David Gardner, Carol Woodward,
  *                Slaven Peles, Cody Balos @ LLNL
  * -----------------------------------------------------------------
  * SUNDIALS Copyright Start
- * Copyright (c) 2002-2024, Lawrence Livermore National Security
+ * Copyright (c) 2025, Lawrence Livermore National Security,
+ * University of Maryland Baltimore County, and the SUNDIALS contributors.
+ * Copyright (c) 2013-2025, Lawrence Livermore National Security
  * and Southern Methodist University.
+ * Copyright (c) 2002-2013, Lawrence Livermore National Security.
  * All rights reserved.
  *
  * See the top-level LICENSE and NOTICE files for details.
@@ -95,6 +98,7 @@ typedef enum
   SUNLINEARSOLVER_MAGMADENSE,
   SUNLINEARSOLVER_ONEMKLDENSE,
   SUNLINEARSOLVER_GINKGO,
+  SUNLINEARSOLVER_GINKGOBATCH,
   SUNLINEARSOLVER_KOKKOSDENSE,
   SUNLINEARSOLVER_CUSTOM
 } SUNLinearSolver_ID;
@@ -118,6 +122,8 @@ struct _generic_SUNLinearSolver_Ops
   SUNErrCode (*setpreconditioner)(SUNLinearSolver, void*, SUNPSetupFn,
                                   SUNPSolveFn);
   SUNErrCode (*setscalingvectors)(SUNLinearSolver, N_Vector, N_Vector);
+  SUNErrCode (*setoptions)(SUNLinearSolver, const char* LSid,
+                           const char* file_name, int argc, char* argv[]);
   SUNErrCode (*setzeroguess)(SUNLinearSolver, sunbooleantype);
   SUNErrCode (*initialize)(SUNLinearSolver);
   int (*setup)(SUNLinearSolver, SUNMatrix);
@@ -169,6 +175,10 @@ SUNErrCode SUNLinSolSetScalingVectors(SUNLinearSolver S, N_Vector s1,
                                       N_Vector s2);
 
 SUNDIALS_EXPORT
+SUNErrCode SUNLinSolSetOptions(SUNLinearSolver S, const char* LSid,
+                               const char* file_name, int argc, char* argv[]);
+
+SUNDIALS_EXPORT
 SUNErrCode SUNLinSolSetZeroGuess(SUNLinearSolver S, sunbooleantype onoff);
 
 SUNDIALS_EXPORT
@@ -197,7 +207,8 @@ N_Vector SUNLinSolResid(SUNLinearSolver S);
 SUNDIALS_EXPORT
 sunindextype SUNLinSolLastFlag(SUNLinearSolver S);
 
-SUNDIALS_EXPORT
+SUNDIALS_DEPRECATED_EXPORT_MSG(
+  "Work space functions will be removed in version 8.0.0")
 SUNErrCode SUNLinSolSpace(SUNLinearSolver S, long int* lenrwLS,
                           long int* leniwLS);
 
@@ -225,18 +236,6 @@ SUNErrCode SUNLinSolFree(SUNLinearSolver S);
 #define SUNLS_PACKAGE_FAIL_REC 806 /* external package recov. fail  */
 #define SUNLS_QRFACT_FAIL      807 /* QRfact found singular matrix  */
 #define SUNLS_LUFACT_FAIL      808 /* LUfact found singular matrix  */
-
-/* -----------------------------------------------------------------------------
- * SUNLinearSolver messages
- * ---------------------------------------------------------------------------*/
-
-#if defined(SUNDIALS_EXTENDED_PRECISION)
-#define SUNLS_MSG_RESIDUAL "\t\tlin. iteration %ld, lin. residual: %Lg\n"
-#elif defined(SUNDIALS_DOUBLE_PRECISION)
-#define SUNLS_MSG_RESIDUAL "\t\tlin. iteration %ld, lin. residual: %g\n"
-#else
-#define SUNLS_MSG_RESIDUAL "\t\tlin. iteration %ld, lin. residual: %g\n"
-#endif
 
 #ifdef __cplusplus
 }

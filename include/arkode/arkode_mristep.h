@@ -1,10 +1,13 @@
 /* -----------------------------------------------------------------
  * Programmer(s): David J. Gardner @ LLNL
- *                Daniel R. Reynolds @ SMU
+ *                Daniel R. Reynolds @ UMBC
  * -----------------------------------------------------------------
  * SUNDIALS Copyright Start
- * Copyright (c) 2002-2024, Lawrence Livermore National Security
+ * Copyright (c) 2025, Lawrence Livermore National Security,
+ * University of Maryland Baltimore County, and the SUNDIALS contributors.
+ * Copyright (c) 2013-2025, Lawrence Livermore National Security
  * and Southern Methodist University.
+ * Copyright (c) 2002-2013, Lawrence Livermore National Security.
  * All rights reserved.
  *
  * See the top-level LICENSE and NOTICE files for details.
@@ -159,8 +162,10 @@ SUNDIALS_EXPORT MRIStepCoupling MRIStepCoupling_Create(int nmat, int stages,
 SUNDIALS_EXPORT MRIStepCoupling MRIStepCoupling_MIStoMRI(ARKodeButcherTable B,
                                                          int q, int p);
 SUNDIALS_EXPORT MRIStepCoupling MRIStepCoupling_Copy(MRIStepCoupling MRIC);
-SUNDIALS_EXPORT void MRIStepCoupling_Space(MRIStepCoupling MRIC,
-                                           sunindextype* liw, sunindextype* lrw);
+SUNDIALS_DEPRECATED_EXPORT_MSG(
+  "Work space functions will be removed in version 8.0.0")
+void MRIStepCoupling_Space(MRIStepCoupling MRIC, sunindextype* liw,
+                           sunindextype* lrw);
 SUNDIALS_EXPORT void MRIStepCoupling_Free(MRIStepCoupling MRIC);
 SUNDIALS_EXPORT void MRIStepCoupling_Write(MRIStepCoupling MRIC, FILE* outfile);
 
@@ -334,7 +339,8 @@ SUNDIALS_DEPRECATED_EXPORT_MSG("use ARKodeComputeState instead")
 int MRIStepComputeState(void* arkode_mem, N_Vector zcor, N_Vector z);
 SUNDIALS_DEPRECATED_EXPORT_MSG("use ARKodeGetNumLinSolvSetups instead")
 int MRIStepGetNumLinSolvSetups(void* arkode_mem, long int* nlinsetups);
-SUNDIALS_DEPRECATED_EXPORT_MSG("use ARKodeGetWorkSpace instead")
+SUNDIALS_DEPRECATED_EXPORT_MSG(
+  "Work space functions will be removed in version 8.0.0")
 int MRIStepGetWorkSpace(void* arkode_mem, long int* lenrw, long int* leniw);
 SUNDIALS_DEPRECATED_EXPORT_MSG("use ARKodeGetNumSteps instead")
 int MRIStepGetNumSteps(void* arkode_mem, long int* nssteps);
@@ -385,7 +391,8 @@ SUNDIALS_DEPRECATED_EXPORT_MSG("use ARKodeGetJacTime instead")
 int MRIStepGetJacTime(void* arkode_mem, sunrealtype* t_J);
 SUNDIALS_DEPRECATED_EXPORT_MSG("use ARKodeGetJacNumSteps instead")
 int MRIStepGetJacNumSteps(void* arkode_mem, long* nst_J);
-SUNDIALS_DEPRECATED_EXPORT_MSG("use ARKodeGetLinWorkSpace instead")
+SUNDIALS_DEPRECATED_EXPORT_MSG(
+  "Work space functions will be removed in version 8.0.0")
 int MRIStepGetLinWorkSpace(void* arkode_mem, long int* lenrwLS,
                            long int* leniwLS);
 SUNDIALS_DEPRECATED_EXPORT_MSG("use ARKodeGetNumJacEvals instead")

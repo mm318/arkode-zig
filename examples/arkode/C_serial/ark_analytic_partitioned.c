@@ -2,8 +2,11 @@
  * Programmer(s): Steven B. Roberts @ LLNL
  *------------------------------------------------------------------------------
  * SUNDIALS Copyright Start
- * Copyright (c) 2002-2024, Lawrence Livermore National Security
+ * Copyright (c) 2025, Lawrence Livermore National Security,
+ * University of Maryland Baltimore County, and the SUNDIALS contributors.
+ * Copyright (c) 2013-2025, Lawrence Livermore National Security
  * and Southern Methodist University.
+ * Copyright (c) 2002-2013, Lawrence Livermore National Security.
  * All rights reserved.
  *
  * See the top-level LICENSE and NOTICE files for details.
@@ -46,12 +49,8 @@
 
 #if defined(SUNDIALS_EXTENDED_PRECISION)
 #define GSYM "Lg"
-#define ESYM "Le"
-#define FSYM "Lf"
 #else
 #define GSYM "g"
-#define ESYM "e"
-#define FSYM "f"
 #endif
 
 typedef struct
@@ -149,7 +148,7 @@ int main(int argc, char* argv[])
       }
 
       flag = SplittingStepSetCoefficients(arkode_mem, coefficients);
-      if (check_flag(&flag, "ARKodeSetFixedStep", 1)) { return 1; }
+      if (check_flag(&flag, "SplittingStepSetCoefficients", 1)) { return 1; }
 
       SplittingStepCoefficients_Destroy(&coefficients);
     }

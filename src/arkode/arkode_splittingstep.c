@@ -2,8 +2,11 @@
  * Programmer(s): Steven B. Roberts @ LLNL
  *------------------------------------------------------------------------------
  * SUNDIALS Copyright Start
- * Copyright (c) 2002-2024, Lawrence Livermore National Security
+ * Copyright (c) 2025, Lawrence Livermore National Security,
+ * University of Maryland Baltimore County, and the SUNDIALS contributors.
+ * Copyright (c) 2013-2025, Lawrence Livermore National Security
  * and Southern Methodist University.
+ * Copyright (c) 2002-2013, Lawrence Livermore National Security.
  * All rights reserved.
  *
  * See the top-level LICENSE and NOTICE files for details.
@@ -14,11 +17,14 @@
  * This is the implementation file for ARKODE's operator splitting module
  *----------------------------------------------------------------------------*/
 
+#include <string.h>
+
 #include <arkode/arkode_splittingstep.h>
 #include <sundials/sundials_nvector.h>
 
 #include "arkode_impl.h"
 #include "arkode_splittingstep_impl.h"
+#include "sundials_utils.h"
 
 /*------------------------------------------------------------------------------
   Shortcut routine to unpack step_mem structure from ark_mem. If missing it
@@ -227,8 +233,9 @@ static int splittingStep_SequentialMethod(ARKodeMem ark_mem,
       sunrealtype t_end   = ark_mem->tn + beta_end * ark_mem->h;
 
       SUNLogInfo(ARK_LOGGER, "begin-partition",
-                 "partition = %i, t_start = %" RSYM ", t_end = %" RSYM, k,
-                 t_start, t_end);
+                 "partition = %i, t_start = " SUN_FORMAT_G
+                 ", t_end = " SUN_FORMAT_G,
+                 k, t_start, t_end);
 
       SUNStepper stepper = step_mem->steppers[k];
       /* TODO(SBR): A potential future optimization is removing this reset and
@@ -356,31 +363,16 @@ static int splittingStep_TakeStep(ARKodeMem ark_mem, sunrealtype* dsmPtr,
 static int splittingStep_PrintAllStats(ARKodeMem ark_mem, FILE* outfile,
                                        SUNOutputFormat fmt)
 {
-  // TODO(SBR): update when https://github.com/LLNL/sundials/pull/517 merged
   ARKodeSplittingStepMem step_mem = NULL;
   int retval = splittingStep_AccessStepMem(ark_mem, __func__, &step_mem);
   if (retval != ARK_SUCCESS) { return retval; }
 
-  switch (fmt)
+  char name_buf[SUN_TABLE_WIDTH];
+  for (int k = 0; k < step_mem->partitions; k++)
   {
-  case SUN_OUTPUTFORMAT_TABLE:
-    for (int k = 0; k < step_mem->partitions; k++)
-    {
-      fprintf(outfile, "Partition %i evolves          = %ld\n", k,
-              step_mem->n_stepper_evolves[k]);
-    }
-    break;
-  case SUN_OUTPUTFORMAT_CSV:
-    for (int k = 0; k < step_mem->partitions; k++)
-    {
-      fprintf(outfile, ",Partition %i evolves,%ld", k,
-              step_mem->n_stepper_evolves[k]);
-    }
-    break;
-  default:
-    arkProcessError(ark_mem, ARK_ILL_INPUT, __LINE__, __func__, __FILE__,
-                    "Invalid formatting option.");
-    return ARK_ILL_INPUT;
+    snprintf(name_buf, sizeof(name_buf), "Partition %i evolves", k + 1);
+    sunfprintf_long(outfile, fmt, SUNFALSE, name_buf,
+                    step_mem->n_stepper_evolves[k]);
   }
 
   return ARK_SUCCESS;
@@ -464,6 +456,45 @@ static int splittingStep_SetOrder(ARKodeMem ark_mem, int order)
 }
 
 /*------------------------------------------------------------------------------
+  Routine to set SplittingStep options
+  ----------------------------------------------------------------------------*/
+static int splittingStep_SetOptions(ARKodeMem ark_mem, int* argidx, char* argv[],
+                                    size_t offset, sunbooleantype* arg_used)
+{
+  /* The only SplittingStep-specific "Set" routine takes a custom set of
+     coefficients; however, these may be specified by name, so here we'll support
+     a key to specify the SplittingStepCoefficients by name,
+     create the coefficients with that name, attach it to SplittingStep (who copies its
+     values), and then frees the coefficients. */
+  if (strcmp(argv[*argidx] + offset, "splitting_coefficients_name") == 0)
+  {
+    (*argidx)++;
+    SplittingStepCoefficients Coefficients =
+      SplittingStepCoefficients_LoadCoefficientsByName(argv[*argidx]);
+    if (Coefficients == NULL)
+    {
+      arkProcessError(ark_mem, ARK_ILL_INPUT, __LINE__, __func__, __FILE__,
+                      "error setting key %s %s (invalid coefficients name)",
+                      argv[(*argidx) - 1], argv[*argidx]);
+      return ARK_ILL_INPUT;
+    }
+    int retval = SplittingStepSetCoefficients(ark_mem, Coefficients);
+    SplittingStepCoefficients_Destroy(&Coefficients);
+    if (retval != ARK_SUCCESS)
+    {
+      arkProcessError(ark_mem, retval, __LINE__, __func__, __FILE__,
+                      "error setting key %s %s (SetCoefficients failed)",
+                      argv[(*argidx) - 1], argv[*argidx]);
+      return retval;
+    }
+    *arg_used = SUNTRUE;
+    return ARK_SUCCESS;
+  }
+
+  return ARK_SUCCESS;
+}
+
+/*------------------------------------------------------------------------------
   Resets all SplittingStep optional inputs to their default values. Does not
   change problem-defining function pointers or user_data pointer.
   ----------------------------------------------------------------------------*/
@@ -474,15 +505,6 @@ static int splittingStep_SetDefaults(ARKodeMem ark_mem)
   if (retval != ARK_SUCCESS) { return retval; }
 
   return splittingStep_SetOrder(ark_mem, 0);
-}
-
-/*------------------------------------------------------------------------------
-  This routine checks if all required vector operations are present. If any of
-  them is missing it returns SUNFALSE.
-  ----------------------------------------------------------------------------*/
-static sunbooleantype splittingStep_CheckNVector(N_Vector y)
-{
-  return y->ops->nvlinearsum != NULL && y->ops->nvscale != NULL;
 }
 
 /*------------------------------------------------------------------------------
@@ -539,14 +561,6 @@ static int splittingStep_CheckArgs(ARKodeMem ark_mem, SUNStepper* steppers,
   {
     arkProcessError(ark_mem, ARK_ILL_INPUT, __LINE__, __func__, __FILE__,
                     MSG_ARK_NULL_Y0);
-    return ARK_ILL_INPUT;
-  }
-
-  /* Test if all required vector operations are implemented */
-  if (!splittingStep_CheckNVector(y0))
-  {
-    arkProcessError(NULL, ARK_ILL_INPUT, __LINE__, __func__, __FILE__,
-                    MSG_ARK_BAD_NVECTOR);
     return ARK_ILL_INPUT;
   }
 
@@ -644,6 +658,7 @@ void* SplittingStepCreate(SUNStepper* steppers, int partitions, sunrealtype t0,
   ark_mem->step_writeparameters = splittingStep_WriteParameters;
   ark_mem->step_free            = splittingStep_Free;
   ark_mem->step_printmem        = splittingStep_PrintMem;
+  ark_mem->step_setoptions      = splittingStep_SetOptions;
   ark_mem->step_setdefaults     = splittingStep_SetDefaults;
   ark_mem->step_setorder        = splittingStep_SetOrder;
   ark_mem->step_mem             = (void*)step_mem;

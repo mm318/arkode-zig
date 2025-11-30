@@ -2,8 +2,11 @@
  * Programmer(s): Steven Roberts @ LLNL
  * -----------------------------------------------------------------------------
  * SUNDIALS Copyright Start
- * Copyright (c) 2002-2023, Lawrence Livermore National Security
+ * Copyright (c) 2025, Lawrence Livermore National Security,
+ * University of Maryland Baltimore County, and the SUNDIALS contributors.
+ * Copyright (c) 2013-2025, Lawrence Livermore National Security
  * and Southern Methodist University.
+ * Copyright (c) 2002-2013, Lawrence Livermore National Security.
  * All rights reserved.
  *
  * See the top-level LICENSE and NOTICE files for details.
@@ -98,7 +101,7 @@ static int solve(const char* im, const char* ex, int steps,
 {
   int retval = 0;
   int s;
-  sunrealtype t               = 1.0;
+  sunrealtype t               = SUN_RCONST(1.0);
   SUNContext sunctx           = NULL;
   N_Vector y                  = NULL;
   SUNMatrix jacobian_mat      = NULL;
@@ -126,7 +129,7 @@ static int solve(const char* im, const char* ex, int steps,
   if (check_retval(mass_mat, "N_VNew_Serial", 0)) return 1;
 
   /* Create ARKODE mem structure */
-  arkode_mem = ARKStepCreate(f_explicit, f_implicit, 0.0, y, sunctx);
+  arkode_mem = ARKStepCreate(f_explicit, f_implicit, SUN_RCONST(0.0), y, sunctx);
   if (check_retval(arkode_mem, "ARKStepCreate", 0)) return 1;
 
   retval = ARKStepSetTableName(arkode_mem, im, ex);
@@ -137,7 +140,7 @@ static int solve(const char* im, const char* ex, int steps,
 
   /* Specify a time step so no extra mass evaluations occur from initial step
    * size procedure */
-  retval = ARKodeSetInitStep(arkode_mem, 0.01);
+  retval = ARKodeSetInitStep(arkode_mem, SUN_RCONST(1.0e-5));
   if (check_retval(&retval, "ARKodeSetInitStep", 1)) return 1;
 
   /* Use Lagrange interpolation because Hermite may need addition mass matrix
