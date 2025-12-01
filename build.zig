@@ -1115,7 +1115,7 @@ fn build_unit_tests(
                 },
             },
             .run_infos = &.{
-                &.{ "100", "1", "100", "1e-14", "0" }, // TODO: currently failing to converge (related to Gram-Schmidt orthogonalization type = 1?)
+                &.{ "100", "1", "100", "1e-14", "0" },
                 &.{ "100", "2", "100", "1e-14", "0" },
             },
         },
@@ -1166,9 +1166,9 @@ fn build_unit_tests(
                 },
             },
             .run_infos = &.{
-                &.{ "100", "1", "1", "100", "1e-14", "0" }, // TODO: currently failing to converge (related to Gram-Schmidt orthogonalization type = 1?)
+                &.{ "100", "1", "1", "100", "1e-14", "0" },
                 &.{ "100", "2", "1", "100", "1e-14", "0" },
-                &.{ "100", "1", "2", "100", "1e-14", "0" }, // TODO: currently failing to converge (related to Gram-Schmidt orthogonalization type = 1?)
+                &.{ "100", "1", "2", "100", "1e-14", "0" },
                 &.{ "100", "2", "2", "100", "1e-14", "0" },
             },
         },

@@ -187,9 +187,10 @@ int main(int argc, char* argv[])
   fails += Test_SUNLinSolSetPreconditioner(LS, &ProbData, PSetup, PSolve, 0);
   fails += Test_SUNLinSolSetScalingVectors(LS, ProbData.s1, ProbData.s2, 0);
   fails += Test_SUNLinSolSetZeroGuess(LS, 0);
+  fails += SUNLinSol_SPFGMRSetGSType(LS, gstype);
+  fails += SUNLinSol_SPFGMRSetMaxRestarts(LS, 1); // allow one restart (two cycles)
   fails += Test_SUNLinSolInitialize(LS, 0);
   fails += Test_SUNLinSolSpace(LS, 0);
-  fails += SUNLinSol_SPFGMRSetGSType(LS, gstype);
   if (fails)
   {
     printf("FAIL: SUNLinSol_SPFGMR module failed %i initialization tests\n\n",
