@@ -76,6 +76,9 @@ fn sundials_add_library(
     });
 
     sundials_add_compile_options(b, lib, sources, config_header);
+    if (std.mem.indexOf(u8, name, "pthread")) |_| {
+        lib.linkSystemLibrary("pthread");
+    }
 
     return lib;
 }
@@ -182,8 +185,8 @@ fn configHeader(
         .OpenMP_VERSION = "",
         // .SUNDIALS_PETSC_ENABLED = 0,
         .PETSC_VERSION = "",
-        // .SUNDIALS_PTHREADS_ENABLED = 0,
-        .Threads_VERSION = "",
+        .SUNDIALS_PTHREADS_ENABLED = 1,
+        .Threads_VERSION = "0",
         // .SUNDIALS_RAJA_ENABLED = 0,
         .RAJA_VERSION = "",
         // .SUNDIALS_SUPERLUDIST_ENABLED = 0,
@@ -220,6 +223,7 @@ fn configHeader(
         .SUNDIALS_CONFIGH_BUILDS =
         \\#define SUNDIALS_ARKODE 1
         \\#define SUNDIALS_NVECTOR_SERIAL 1
+        \\#define SUNDIALS_NVECTOR_PTHREADS 1
         \\#define SUNDIALS_NVECTOR_MANYVECTOR 1
         \\#define SUNDIALS_SUNMATRIX_BAND 1
         \\#define SUNDIALS_SUNMATRIX_DENSE 1
@@ -304,6 +308,10 @@ pub fn build(b: *std.Build) !void {
         .{
             .name = "sundials_nvecserial",
             .src_files = &.{"src/nvector/serial/nvector_serial.c"},
+        },
+        .{
+            .name = "sundials_nvecpthreads",
+            .src_files = &.{"src/nvector/pthreads/nvector_pthreads.c"},
         },
         .{
             .name = "sundials_sunmatrixband",
@@ -988,6 +996,23 @@ fn build_unit_tests(
             .run_infos = &.{
                 &.{ "1000", "0" },
                 &.{ "10000", "0" },
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_nvector_pthreads",
+                .src_files = &.{
+                    "test/unit_tests/nvector/pthreads/test_nvector_pthreads.c",
+                    "test/unit_tests/nvector/test_nvector.c",
+                },
+            },
+            .run_infos = &.{
+                &.{ "1000", "1", "0" },
+                &.{ "1000", "2", "0" },
+                &.{ "1000", "4", "0" },
+                &.{ "10000", "1", "0" },
+                &.{ "10000", "2", "0" },
+                &.{ "10000", "4", "0" },
             },
         },
         .{
