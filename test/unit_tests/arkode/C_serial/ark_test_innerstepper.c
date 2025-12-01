@@ -2,8 +2,11 @@
  * Programmer(s): David J. Gardner @ LLNL
  * -----------------------------------------------------------------------------
  * SUNDIALS Copyright Start
- * Copyright (c) 2002-2024, Lawrence Livermore National Security
+ * Copyright (c) 2025, Lawrence Livermore National Security,
+ * University of Maryland Baltimore County, and the SUNDIALS contributors.
+ * Copyright (c) 2013-2025, Lawrence Livermore National Security
  * and Southern Methodist University.
+ * Copyright (c) 2002-2013, Lawrence Livermore National Security.
  * All rights reserved.
  *
  * See the top-level LICENSE and NOTICE files for details.
@@ -22,12 +25,6 @@
 #include "arkode/arkode.h"
 #include "arkode/arkode_mristep.h"
 #include "nvector/nvector_serial.h"
-
-#if defined(SUNDIALS_EXTENDED_PRECISION)
-#define GSYM "Lg"
-#else
-#define GSYM "g"
-#endif
 
 #define ZERO SUN_RCONST(0.0)
 #define ONE  SUN_RCONST(1.0)

@@ -1,8 +1,8 @@
 # ARKODE
-### Version 6.2.1 (Dec 2024)
+### Version 6.5.0 (Sep 2025)
 
 **Daniel R. Reynolds,
-  Department of Mathematics, SMU**
+  Department of Mathematics and Statistics, UMBC**
 
 **David J. Gardner, Carol S. Woodward, and Cody J. Balos,
   Center for Applied Scientific Computing, LLNL**
@@ -10,9 +10,9 @@
 ARKODE is a package for the solution of stiff, nonstiff, and multirate ordinary
 differential equation (ODE) systems (initial value problems) given in linearly
 implicit the form
-
-  $$M(t) \\, y' = f_1(t,y) + f_2(t,y), \quad y(t_0) = y_0$$
-
+```
+M y' = f1(t,y) + f2(t,y), y(t0) = y0.
+```
 The integration methods implemented in ARKODE include explicit and implicit
 Runge-Kutta methods, implicit-explicit (IMEX) additive Runge-Kutta methods, and
 multirate infinitesimal (MRI) methods.

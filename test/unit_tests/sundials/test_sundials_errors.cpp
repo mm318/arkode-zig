@@ -1,7 +1,10 @@
 /* -----------------------------------------------------------------
  * SUNDIALS Copyright Start
- * Copyright (c) 2002-2024, Lawrence Livermore National Security
+ * Copyright (c) 2025, Lawrence Livermore National Security,
+ * University of Maryland Baltimore County, and the SUNDIALS contributors.
+ * Copyright (c) 2013-2025, Lawrence Livermore National Security
  * and Southern Methodist University.
+ * Copyright (c) 2002-2013, Lawrence Livermore National Security.
  * All rights reserved.
  *
  * See the top-level LICENSE and NOTICE files for details.
@@ -90,6 +93,7 @@ TEST_F(SUNErrConditionTest, LastErrConditionPersists)
   N_VCloneEmptyVectorArray(-1, v); // -1 is an out of range argument
   SUNErrCode err = SUNContext_PeekLastError(sunctx);
   EXPECT_EQ(err, SUN_ERR_ARG_OUTOFRANGE);
+
   N_Vector* arr = N_VCloneEmptyVectorArray(1, v);
   EXPECT_FALSE(arr);
   err = SUNContext_GetLastError(sunctx);

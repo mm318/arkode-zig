@@ -1,9 +1,12 @@
 /*---------------------------------------------------------------
- * Programmer(s): Daniel R. Reynolds @ SMU
+ * Programmer(s): Daniel R. Reynolds @ UMBC
  *---------------------------------------------------------------
  * SUNDIALS Copyright Start
- * Copyright (c) 2002-2024, Lawrence Livermore National Security
+ * Copyright (c) 2025, Lawrence Livermore National Security,
+ * University of Maryland Baltimore County, and the SUNDIALS contributors.
+ * Copyright (c) 2013-2025, Lawrence Livermore National Security
  * and Southern Methodist University.
+ * Copyright (c) 2002-2013, Lawrence Livermore National Security.
  * All rights reserved.
  *
  * See the top-level LICENSE and NOTICE files for details.
@@ -27,7 +30,6 @@
 
 /* constants */
 #define MIN_INC_MULT SUN_RCONST(1000.0)
-#define MAX_DQITERS  3 /* max. # of attempts to recover in DQ J*v */
 #define ZERO         SUN_RCONST(0.0)
 #define PT25         SUN_RCONST(0.25)
 #define ONE          SUN_RCONST(1.0)
@@ -724,6 +726,14 @@ int ARKodeSetLSNormFactor(void* arkode_mem, sunrealtype nrmfac)
   }
   else if (nrmfac < ZERO)
   {
+    /* Ensure that vector support N_VDotProd */
+    if (ark_mem->tempv1->ops->nvdotprod == NULL)
+    {
+      arkProcessError(ark_mem, ARKLS_ILL_INPUT, __LINE__, __func__,
+                      __FILE__, "N_VDotProd unimplemented (required for ARKodeSetLSNormFactor)");
+      return (ARKLS_ILL_INPUT);
+    }
+
     /* compute factor for WRMS norm with dot product */
     N_VConst(ONE, ark_mem->tempv1);
     arkls_mem->nrmfac = SUNRsqrt(N_VDotProd(ark_mem->tempv1, ark_mem->tempv1));
@@ -1676,6 +1686,14 @@ int ARKodeSetMassLSNormFactor(void* arkode_mem, sunrealtype nrmfac)
   }
   else if (nrmfac < ZERO)
   {
+    /* Ensure that vector support N_VDotProd */
+    if (ark_mem->tempv1->ops->nvdotprod == NULL)
+    {
+      arkProcessError(ark_mem, ARKLS_ILL_INPUT, __LINE__, __func__,
+                      __FILE__, "N_VDotProd unimplemented (required for ARKodeSetMassLSNormFactor)");
+      return (ARKLS_ILL_INPUT);
+    }
+
     /* compute factor for WRMS norm with dot product */
     N_VConst(ONE, ark_mem->tempv1);
     arkls_mem->nrmfac = SUNRsqrt(N_VDotProd(ark_mem->tempv1, ark_mem->tempv1));

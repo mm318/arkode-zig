@@ -1,9 +1,12 @@
 /*-----------------------------------------------------------------
- * Programmer(s): Daniel R. Reynolds @ SMU
+ * Programmer(s): Daniel R. Reynolds @ UMBC
  *---------------------------------------------------------------
  * SUNDIALS Copyright Start
- * Copyright (c) 2002-2024, Lawrence Livermore National Security
+ * Copyright (c) 2025, Lawrence Livermore National Security,
+ * University of Maryland Baltimore County, and the SUNDIALS contributors.
+ * Copyright (c) 2013-2025, Lawrence Livermore National Security
  * and Southern Methodist University.
+ * Copyright (c) 2002-2013, Lawrence Livermore National Security.
  * All rights reserved.
  *
  * See the top-level LICENSE and NOTICE files for details.
@@ -71,7 +74,7 @@ int main(void)
   sunrealtype Tf     = SUN_RCONST(10.0);   /* final time */
   sunrealtype dTout  = SUN_RCONST(1.0);    /* time between outputs */
   sunindextype NEQ   = 1;                  /* number of dependent vars. */
-  sunrealtype reltol = SUN_RCONST(1.0e-6); /* tolerances */
+  sunrealtype reltol = SUN_RCONST(1.0e-5); /* tolerances */
   sunrealtype abstol = SUN_RCONST(1.0e-10);
   sunrealtype lambda = SUN_RCONST(-100.0); /* stiffness parameter */
 
@@ -337,8 +340,13 @@ static int check_ans(N_Vector y, sunrealtype t, sunrealtype rtol, sunrealtype at
   ewt = SUN_RCONST(1.0) / (rtol * SUNRabs(ans) + atol);
   err = ewt * SUNRabs(NV_Ith_S(y, 0) - ans);
 
+  /* The local errors accumulate from step to step so that the global error is
+   * not quite within the local error tolerances. This factor accounts for
+   * this. */
+  sunrealtype global_bound = SUN_RCONST(1.5);
+
   /* is the solution within the tolerances? */
-  passfail = (err < SUN_RCONST(1.0)) ? 0 : 1;
+  passfail = (err < global_bound) ? 0 : 1;
 
   if (passfail)
   {

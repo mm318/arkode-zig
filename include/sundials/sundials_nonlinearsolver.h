@@ -2,8 +2,11 @@
  * Programmer(s): David J. Gardner, and Cody J. Balos @ LLNL
  * -----------------------------------------------------------------------------
  * SUNDIALS Copyright Start
- * Copyright (c) 2002-2024, Lawrence Livermore National Security
+ * Copyright (c) 2025, Lawrence Livermore National Security,
+ * University of Maryland Baltimore County, and the SUNDIALS contributors.
+ * Copyright (c) 2013-2025, Lawrence Livermore National Security
  * and Southern Methodist University.
+ * Copyright (c) 2002-2013, Lawrence Livermore National Security.
  * All rights reserved.
  *
  * See the top-level LICENSE and NOTICE files for details.
@@ -109,6 +112,8 @@ struct _generic_SUNNonlinearSolver_Ops
   SUNErrCode (*setlsetupfn)(SUNNonlinearSolver, SUNNonlinSolLSetupFn);
   SUNErrCode (*setlsolvefn)(SUNNonlinearSolver, SUNNonlinSolLSolveFn);
   SUNErrCode (*setctestfn)(SUNNonlinearSolver, SUNNonlinSolConvTestFn, void*);
+  SUNErrCode (*setoptions)(SUNNonlinearSolver NLS, const char* NLSid,
+                           const char* file_name, int argc, char* argv[]);
   SUNErrCode (*setmaxiters)(SUNNonlinearSolver, int);
   SUNErrCode (*getnumiters)(SUNNonlinearSolver, long int*);
   SUNErrCode (*getcuriter)(SUNNonlinearSolver, int*);
@@ -171,6 +176,10 @@ SUNErrCode SUNNonlinSolSetConvTestFn(SUNNonlinearSolver NLS,
                                      void* ctest_data);
 
 SUNDIALS_EXPORT
+SUNErrCode SUNNonlinSolSetOptions(SUNNonlinearSolver NLS, const char* NLSid,
+                                  const char* file_name, int argc, char* argv[]);
+
+SUNDIALS_EXPORT
 SUNErrCode SUNNonlinSolSetMaxIters(SUNNonlinearSolver NLS, int maxiters);
 
 /* get functions */
@@ -191,18 +200,6 @@ SUNErrCode SUNNonlinSolGetNumConvFails(SUNNonlinearSolver NLS,
 /* Recoverable */
 #define SUN_NLS_CONTINUE   +901 /* not converged, keep iterating      */
 #define SUN_NLS_CONV_RECVR +902 /* convergece failure, try to recover */
-
-/* -----------------------------------------------------------------------------
- * SUNNonlinearSolver messages
- * ---------------------------------------------------------------------------*/
-
-#if defined(SUNDIALS_EXTENDED_PRECISION)
-#define SUN_NLS_MSG_RESIDUAL "\tnonlin. iteration %ld, nonlin. residual: %Lg\n"
-#elif defined(SUNDIALS_DOUBLE_PRECISION)
-#define SUN_NLS_MSG_RESIDUAL "\tnonlin. iteration %ld, nonlin. residual: %g\n"
-#else
-#define SUN_NLS_MSG_RESIDUAL "\tnonlin. iteration %ld, nonlin. residual: %g\n"
-#endif
 
 #ifdef __cplusplus
 }

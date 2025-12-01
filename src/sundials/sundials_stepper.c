@@ -1,7 +1,10 @@
 /* -----------------------------------------------------------------
  * SUNDIALS Copyright Start
- * Copyright (c) 2002-2024, Lawrence Livermore National Security
+ * Copyright (c) 2025, Lawrence Livermore National Security,
+ * University of Maryland Baltimore County, and the SUNDIALS contributors.
+ * Copyright (c) 2013-2025, Lawrence Livermore National Security
  * and Southern Methodist University.
+ * Copyright (c) 2002-2013, Lawrence Livermore National Security.
  * All rights reserved.
  *
  * See the top-level LICENSE and NOTICE files for details.
@@ -96,10 +99,28 @@ SUNErrCode SUNStepper_FullRhs(SUNStepper stepper, sunrealtype t, N_Vector v,
   return SUN_ERR_NOT_IMPLEMENTED;
 }
 
+SUNErrCode SUNStepper_ReInit(SUNStepper stepper, sunrealtype t0, N_Vector y0)
+{
+  SUNFunctionBegin(stepper->sunctx);
+  if (stepper->ops->reinit) { return stepper->ops->reinit(stepper, t0, y0); }
+  return SUN_ERR_NOT_IMPLEMENTED;
+}
+
 SUNErrCode SUNStepper_Reset(SUNStepper stepper, sunrealtype tR, N_Vector yR)
 {
   SUNFunctionBegin(stepper->sunctx);
   if (stepper->ops->reset) { return stepper->ops->reset(stepper, tR, yR); }
+  return SUN_ERR_NOT_IMPLEMENTED;
+}
+
+SUNErrCode SUNStepper_ResetCheckpointIndex(SUNStepper stepper,
+                                           suncountertype ckptIdxR)
+{
+  SUNFunctionBegin(stepper->sunctx);
+  if (stepper->ops->reset)
+  {
+    return stepper->ops->resetcheckpointindex(stepper, ckptIdxR);
+  }
   return SUN_ERR_NOT_IMPLEMENTED;
 }
 
@@ -149,6 +170,16 @@ SUNErrCode SUNStepper_GetContent(SUNStepper stepper, void** content)
   return SUN_SUCCESS;
 }
 
+SUNErrCode SUNStepper_GetNumSteps(SUNStepper stepper, suncountertype* nst)
+{
+  SUNFunctionBegin(stepper->sunctx);
+  if (stepper->ops->getnumsteps)
+  {
+    return stepper->ops->getnumsteps(stepper, nst);
+  }
+  return SUN_ERR_NOT_IMPLEMENTED;
+}
+
 SUNErrCode SUNStepper_SetLastFlag(SUNStepper stepper, int last_flag)
 {
   SUNFunctionBegin(stepper->sunctx);
@@ -184,10 +215,25 @@ SUNErrCode SUNStepper_SetFullRhsFn(SUNStepper stepper, SUNStepperFullRhsFn fn)
   return SUN_SUCCESS;
 }
 
+SUNErrCode SUNStepper_SetReInitFn(SUNStepper stepper, SUNStepperReInitFn fn)
+{
+  SUNFunctionBegin(stepper->sunctx);
+  stepper->ops->reinit = fn;
+  return SUN_SUCCESS;
+}
+
 SUNErrCode SUNStepper_SetResetFn(SUNStepper stepper, SUNStepperResetFn fn)
 {
   SUNFunctionBegin(stepper->sunctx);
   stepper->ops->reset = fn;
+  return SUN_SUCCESS;
+}
+
+SUNErrCode SUNStepper_SetResetCheckpointIndexFn(SUNStepper stepper,
+                                                SUNStepperResetCheckpointIndexFn fn)
+{
+  SUNFunctionBegin(stepper->sunctx);
+  stepper->ops->resetcheckpointindex = fn;
   return SUN_SUCCESS;
 }
 
@@ -210,6 +256,14 @@ SUNErrCode SUNStepper_SetForcingFn(SUNStepper stepper, SUNStepperSetForcingFn fn
 {
   SUNFunctionBegin(stepper->sunctx);
   stepper->ops->setforcing = fn;
+  return SUN_SUCCESS;
+}
+
+SUNErrCode SUNStepper_SetGetNumStepsFn(SUNStepper stepper,
+                                       SUNStepperGetNumStepsFn fn)
+{
+  SUNFunctionBegin(stepper->sunctx);
+  stepper->ops->getnumsteps = fn;
   return SUN_SUCCESS;
 }
 
