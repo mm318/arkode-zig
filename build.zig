@@ -106,12 +106,45 @@ fn sundials_add_executable(
     return exe;
 }
 
+fn appendConfigDefine(allocator: std.mem.Allocator, builder: *std.ArrayList(u8), macro: []const u8) void {
+    builder.writer(allocator).print("#define {s} 1\n", .{macro}) catch @panic("OOM");
+}
+
 fn configHeader(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-) *std.Build.Step.ConfigHeader {
+    features: SundialsFeatures,
+) !*std.Build.Step.ConfigHeader {
     _ = target;
+
+    var config_builds = std.ArrayList(u8).initCapacity(b.allocator, 1024) catch @panic("OOM");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_ARKODE");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_NVECTOR_SERIAL");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_NVECTOR_PTHREADS");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_NVECTOR_MANYVECTOR");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNMATRIX_BAND");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNMATRIX_DENSE");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNMATRIX_SPARSE");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNLINSOL_BAND");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNLINSOL_DENSE");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNLINSOL_PCG");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNLINSOL_SPBCGS");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNLINSOL_SPFGMR");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNLINSOL_SPGMR");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNLINSOL_SPTFQMR");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNNONLINSOL_NEWTON");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNNONLINSOL_FIXEDPOINT");
+    if (features.with_klu) {
+        appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNLINSOL_KLU");
+    }
+    if (features.with_lapack) {
+        appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNLINSOL_LAPACKBAND");
+        appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNLINSOL_LAPACKDENSE");
+    }
+    if (features.with_superlumt) {
+        appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNLINSOL_SUPERLUMT");
+    }
 
     return b.addConfigHeader(.{
         .style = .{ .cmake = b.path("include/sundials/sundials_config.in") },
@@ -122,7 +155,7 @@ fn configHeader(
         .PACKAGE_VERSION_MINOR = 2,
         .PACKAGE_VERSION_PATCH = 1,
         .PACKAGE_VERSION_LABEL = "",
-        .PACKAGE_VERSION = "7.2.1",
+        .PACKAGE_VERSION = "7.5.0",
         .SUNDIALS_GIT_VERSION = "",
         .SUNDIALS_C_COMPILER_HAS_BUILTIN_EXPECT = 1,
         // .SUNDIALS_C_COMPILER_HAS_ATTRIBUTE_ASSUME = 0,
@@ -220,24 +253,7 @@ fn configHeader(
         .HIP_VERSION = "",
         .AMDGPU_TARGETS = "",
         // .SUNDIALS_SYCL_2020_UNSUPPORTED = 0,
-        .SUNDIALS_CONFIGH_BUILDS =
-        \\#define SUNDIALS_ARKODE 1
-        \\#define SUNDIALS_NVECTOR_SERIAL 1
-        \\#define SUNDIALS_NVECTOR_PTHREADS 1
-        \\#define SUNDIALS_NVECTOR_MANYVECTOR 1
-        \\#define SUNDIALS_SUNMATRIX_BAND 1
-        \\#define SUNDIALS_SUNMATRIX_DENSE 1
-        \\#define SUNDIALS_SUNMATRIX_SPARSE 1
-        \\#define SUNDIALS_SUNLINSOL_BAND 1
-        \\#define SUNDIALS_SUNLINSOL_DENSE 1
-        \\#define SUNDIALS_SUNLINSOL_PCG 1
-        \\#define SUNDIALS_SUNLINSOL_SPBCGS 1
-        \\#define SUNDIALS_SUNLINSOL_SPFGMR 1
-        \\#define SUNDIALS_SUNLINSOL_SPGMR 1
-        \\#define SUNDIALS_SUNLINSOL_SPTFQMR 1
-        \\#define SUNDIALS_SUNNONLINSOL_NEWTON 1
-        \\#define SUNDIALS_SUNNONLINSOL_FIXEDPOINT 1
-        ,
+        .SUNDIALS_CONFIGH_BUILDS = config_builds.toOwnedSlice(b.allocator) catch @panic("OOM"),
     });
 }
 
@@ -260,12 +276,12 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const config_header = configHeader(b, target, optimize);
+    const config_header = configHeader(b, target, optimize, features) catch @panic("OOM");
 
-    var sundials_components = try std.ArrayList(SundialsComponent).initCapacity(b.allocator, 64);
+    var sundials_components = std.ArrayList(SundialsComponent).initCapacity(b.allocator, 64) catch @panic("OOM");
     defer sundials_components.deinit(b.allocator);
 
-    try sundials_components.appendSlice(b.allocator, &.{
+    sundials_components.appendSlice(b.allocator, &.{
         .{
             .name = "sundials_core",
             .src_files = &.{
@@ -381,39 +397,39 @@ pub fn build(b: *std.Build) !void {
             .name = "sundials_sundomeigestpower",
             .src_files = &.{"src/sundomeigest/power/sundomeigest_power.c"},
         },
-    });
+    }) catch @panic("OOM");
 
     if (features.with_klu) {
-        try sundials_components.append(b.allocator, .{
+        sundials_components.append(b.allocator, .{
             .name = "sundials_sunlinsolklu",
             .src_files = &.{"src/sunlinsol/klu/sunlinsol_klu.c"},
-        });
+        }) catch @panic("OOM");
     }
     if (features.with_lapack) {
-        try sundials_components.append(b.allocator, .{
+        sundials_components.append(b.allocator, .{
             .name = "sundials_sunlinsollapackband",
             .src_files = &.{"src/sunlinsol/lapackband/sunlinsol_lapackband.c"},
-        });
-        try sundials_components.append(b.allocator, .{
+        }) catch @panic("OOM");
+        sundials_components.append(b.allocator, .{
             .name = "sundials_sunlinsollapackdense",
             .src_files = &.{"src/sunlinsol/lapackdense/sunlinsol_lapackdense.c"},
-        });
-        try sundials_components.append(b.allocator, .{
+        }) catch @panic("OOM");
+        sundials_components.append(b.allocator, .{
             .name = "sundials_sundomeigestarnoldi",
             .src_files = &.{"src/sundomeigest/arnoldi/sundomeigest_arnoldi.c"},
-        });
+        }) catch @panic("OOM");
     }
     if (features.with_superlumt) {
-        try sundials_components.append(b.allocator, .{
+        sundials_components.append(b.allocator, .{
             .name = "sundials_sunlinsolsuperlumt",
             .src_files = &.{"src/sunlinsol/superlumt/sunlinsol_superlumt.c"},
-        });
+        }) catch @panic("OOM");
     }
 
-    var sundials_libs = try std.ArrayList(*std.Build.Step.Compile).initCapacity(
+    var sundials_libs = std.ArrayList(*std.Build.Step.Compile).initCapacity(
         b.allocator,
         sundials_components.items.len,
-    );
+    ) catch @panic("OOM");
     defer sundials_libs.deinit(b.allocator);
 
     for (sundials_components.items) |sundials_lib| {
@@ -425,7 +441,7 @@ pub fn build(b: *std.Build) !void {
             sundials_lib.src_files,
             config_header,
         );
-        try sundials_libs.append(b.allocator, lib);
+        sundials_libs.append(b.allocator, lib) catch @panic("OOM");
     }
 
     const arkode_lib = SundialsComponent{
@@ -1731,7 +1747,7 @@ fn build_unit_tests(
         // adding include paths for utils needed by sundials unit test
         const main_src_file = unit_test.build_info.src_files[0];
         exe.addIncludePath(b.path("src/"));
-        var iter = try std.fs.path.componentIterator(main_src_file);
+        var iter = std.fs.path.componentIterator(main_src_file) catch @panic("OOM");
         _ = iter.next();
         var path_component = iter.next() orelse std.debug.panic("{s} is not a unit test?", .{main_src_file});
         exe.addIncludePath(b.path(path_component.path)); // adding "./test/unit_tests/" directory
