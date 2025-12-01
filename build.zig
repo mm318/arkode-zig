@@ -481,8 +481,9 @@ pub fn build(b: *std.Build) !void {
     arkode.installHeader(config_header.getOutput(), "sundials/sundials_config.h");
     b.installArtifact(arkode);
 
-    build_examples(b, arkode, target, optimize, config_header, features);
-    build_unit_tests(b, arkode, target, optimize, config_header, features);
+    build_examples(b, target, optimize, features, config_header, arkode);
+    build_unit_tests(b, target, optimize, features, config_header, arkode);
+    build_benchmarks(b, target, optimize, config_header, arkode);
 }
 
 const SundialsRunTarget = struct {
@@ -491,13 +492,70 @@ const SundialsRunTarget = struct {
     has_main: bool = true,
 };
 
-fn build_examples(
+fn build_benchmarks(
     b: *std.Build,
-    arkode: *std.Build.Step.Compile,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     config_header: *std.Build.Step.ConfigHeader,
+    arkode: *std.Build.Step.Compile,
+) void {
+    const benchmarks = [_]SundialsRunTarget{
+        .{
+            .build_info = .{
+                .name = "nvector_serial_benchmark",
+                .src_files = &.{
+                    "benchmarks/nvector/test_nvector_performance.c",
+                    "benchmarks/nvector/serial/test_nvector_performance_serial.c",
+                },
+            },
+            .run_infos = &.{
+                &.{ "1000000", "8", "4", "10", "64", "1" },
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "nvector_pthreads_benchmark",
+                .src_files = &.{
+                    "benchmarks/nvector/test_nvector_performance.c",
+                    "benchmarks/nvector/pthreads/test_nvector_performance_pthreads.c",
+                },
+            },
+            .run_infos = &.{
+                &.{ "1000000", "8", "4", "10", "64", "1", "8" },
+            },
+        },
+    };
+
+    const run_benchmarks = b.step("benchmarks", "Run the benchmarks");
+    for (benchmarks) |benchmark| {
+        const exe = sundials_add_executable(
+            b,
+            target,
+            optimize,
+            benchmark.build_info.name,
+            benchmark.build_info.src_files,
+            config_header,
+            arkode,
+        );
+        exe.addIncludePath(b.path("benchmarks/nvector"));
+        b.installArtifact(exe);
+
+        for (benchmark.run_infos) |run_info| {
+            const run_benchmark = b.addRunArtifact(exe);
+            run_benchmark.addArgs(run_info);
+            run_benchmark.setCwd(.{ .cwd_relative = b.getInstallPath(.prefix, "") });
+            run_benchmarks.dependOn(&run_benchmark.step);
+        }
+    }
+}
+
+fn build_examples(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
     features: SundialsFeatures,
+    config_header: *std.Build.Step.ConfigHeader,
+    arkode: *std.Build.Step.Compile,
 ) void {
     var arkode_examples = std.ArrayList(SundialsRunTarget).initCapacity(b.allocator, 64) catch @panic("OOM");
     defer arkode_examples.deinit(b.allocator);
@@ -937,7 +995,7 @@ fn build_examples(
         .run_infos = &.{&.{}},
     }) catch @panic("OOM");
 
-    const run_examples = b.step("examples", "Build and run the examples");
+    const run_examples = b.step("examples", "Run the examples");
     for (arkode_examples.items) |arkode_example| {
         const exe = sundials_add_executable(
             b,
@@ -962,11 +1020,11 @@ fn build_examples(
 
 fn build_unit_tests(
     b: *std.Build,
-    arkode: *std.Build.Step.Compile,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    config_header: *std.Build.Step.ConfigHeader,
     features: SundialsFeatures,
+    config_header: *std.Build.Step.ConfigHeader,
+    arkode: *std.Build.Step.Compile,
 ) void {
     var unit_tests = std.ArrayList(SundialsRunTarget).initCapacity(b.allocator, 64) catch @panic("OOM");
     defer unit_tests.deinit(b.allocator);
@@ -1658,7 +1716,7 @@ fn build_unit_tests(
         .optimize = optimize,
     });
 
-    const run_unit_tests = b.step("test", "Build and run the unit tests");
+    const run_unit_tests = b.step("test", "Run the unit tests");
     for (unit_tests.items) |unit_test| {
         const exe = sundials_add_executable(
             b,
