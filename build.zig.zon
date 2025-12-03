@@ -6,6 +6,10 @@
     .version = "6.5.0",
 
     .dependencies = .{
+        .kompute = .{
+            .url = "https://github.com/mm318/kompute/archive/74c79ebe26a35ff4cb815fc6726f16285662bc2d.tar.gz",
+            .hash = "kompute-0.9.0-3P6s7mTaBgDSf1i2bjc5DeBJTpjfAOQk_-MxasWK3eSI",
+        },
         .googletest = .{
             .path = "deps/googletest",
         },
