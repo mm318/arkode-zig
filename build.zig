@@ -108,6 +108,9 @@ fn sundials_add_executable(
 
     sundials_add_compile_options(b, exe, sources, config_header);
     exe.linkLibrary(library);
+    if (std.mem.indexOf(u8, name, "vulkan")) |_| {
+        exe.linkSystemLibrary("vulkan");
+    }
 
     return exe;
 }
@@ -513,8 +516,9 @@ pub fn build(b: *std.Build) !void {
     for (sundials_libs.items) |sundials_lib| {
         arkode.linkLibrary(sundials_lib);
     }
-    arkode.installHeadersDirectory(b.path("include"), "", .{});
     arkode.installHeader(config_header.getOutput(), "sundials/sundials_config.h");
+    arkode.installHeadersDirectory(b.path("include"), "", .{});
+    arkode.installLibraryHeaders(kompute_dep.artifact("kompute"));
     b.installArtifact(arkode);
 
     build_examples(b, target, optimize, features, config_header, arkode);
@@ -1107,6 +1111,19 @@ fn build_unit_tests(
                 &.{ "10000", "1", "0" },
                 &.{ "10000", "2", "0" },
                 &.{ "10000", "4", "0" },
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_nvector_vulkan",
+                .src_files = &.{
+                    "test/unit_tests/nvector/vulkan/test_nvector_vulkan.cpp",
+                    "test/unit_tests/nvector/test_nvector.c",
+                },
+            },
+            .run_infos = &.{
+                &.{ "1000", "0" },
+                &.{ "10000", "0" },
             },
         },
         .{
