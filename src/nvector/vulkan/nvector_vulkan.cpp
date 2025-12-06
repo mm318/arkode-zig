@@ -48,7 +48,7 @@ using namespace sundials::vulkan;
 
 struct _N_PrivateVectorContent_Vulkan
 {
-  std::shared_ptr<kp::Manager> manager;
+  kp::Manager * manager;
   std::shared_ptr<kp::Tensor> device_tensor;
   std::vector<sunrealtype> host_buffer;
   bool host_dirty{true};
@@ -57,10 +57,10 @@ struct _N_PrivateVectorContent_Vulkan
 
 typedef struct _N_PrivateVectorContent_Vulkan* N_PrivateVectorContent_Vulkan;
 
-static std::shared_ptr<kp::Manager> GetDefaultManager()
+static kp::Manager* GetDefaultManager()
 {
-  static std::shared_ptr<kp::Manager> mgr = std::make_shared<kp::Manager>();
-  return mgr;
+  static kp::Manager mgr;
+  return &mgr;
 }
 
 static void RefreshHostMemoryView(N_Vector v)
