@@ -8,9 +8,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -42,13 +42,14 @@ using namespace sundials::vulkan;
 
 // Macros to access vector content
 #define NVEC_VULKAN_CONTENT(x) ((N_VectorContent_Vulkan)(x->content))
-#define NVEC_VULKAN_LENGTH(x) (NVEC_VULKAN_CONTENT(x)->length)
+#define NVEC_VULKAN_LENGTH(x)  (NVEC_VULKAN_CONTENT(x)->length)
 #define NVEC_VULKAN_MEMHELP(x) (NVEC_VULKAN_CONTENT(x)->mem_helper)
-#define NVEC_VULKAN_PRIVATE(x) ((N_PrivateVectorContent_Vulkan)(NVEC_VULKAN_CONTENT(x)->priv))
+#define NVEC_VULKAN_PRIVATE(x) \
+  ((N_PrivateVectorContent_Vulkan)(NVEC_VULKAN_CONTENT(x)->priv))
 
 struct _N_PrivateVectorContent_Vulkan
 {
-  kp::Manager * manager;
+  kp::Manager* manager;
   std::shared_ptr<kp::Tensor> device_tensor;
   std::vector<sunrealtype> host_buffer;
   bool host_dirty{true};
@@ -68,7 +69,7 @@ static void RefreshHostMemoryView(N_Vector v)
   SUNMemory mem = NVEC_VULKAN_CONTENT(v)->host_data;
   if (mem == NULL)
   {
-    mem = SUNMemoryNewEmpty(v->sunctx);
+    mem                               = SUNMemoryNewEmpty(v->sunctx);
     NVEC_VULKAN_CONTENT(v)->host_data = mem;
   }
   mem->ptr   = NVEC_VULKAN_PRIVATE(v)->host_buffer.data();
@@ -82,7 +83,7 @@ static void RefreshDeviceMemoryView(N_Vector v)
   SUNMemory mem = NVEC_VULKAN_CONTENT(v)->device_data;
   if (mem == NULL)
   {
-    mem = SUNMemoryNewEmpty(v->sunctx);
+    mem                                 = SUNMemoryNewEmpty(v->sunctx);
     NVEC_VULKAN_CONTENT(v)->device_data = mem;
   }
   mem->ptr   = (void*)NVEC_VULKAN_PRIVATE(v)->host_buffer.data();
@@ -108,12 +109,12 @@ static void EnsureTensor(N_Vector v)
   auto priv = NVEC_VULKAN_PRIVATE(v);
   if (!priv->device_tensor)
   {
-    priv->device_tensor = priv->manager->tensor(
-      priv->host_buffer.data(),
-      static_cast<uint32_t>(NVEC_VULKAN_LENGTH(v)),
-      sizeof(sunrealtype),
-      kp::Memory::dataType<sunrealtype>(),
-      kp::Memory::MemoryTypes::eDevice);
+    priv->device_tensor =
+      priv->manager->tensor(priv->host_buffer.data(),
+                            static_cast<uint32_t>(NVEC_VULKAN_LENGTH(v)),
+                            sizeof(sunrealtype),
+                            kp::Memory::dataType<sunrealtype>(),
+                            kp::Memory::MemoryTypes::eDevice);
   }
 }
 
@@ -141,7 +142,7 @@ static void CopyDeviceToHost(N_Vector v)
   seq->record<kp::OpSyncLocal>(
     {std::static_pointer_cast<kp::Memory>(priv->device_tensor)});
   seq->eval();
-  priv->host_buffer = priv->device_tensor->vector<sunrealtype>();
+  priv->host_buffer  = priv->device_tensor->vector<sunrealtype>();
   priv->host_dirty   = false;
   priv->device_dirty = false;
   RefreshHostMemoryView(v);
@@ -152,9 +153,9 @@ static void CopyDeviceToHost(N_Vector v)
 // Slang compilation helpers
 // ---------------------------------------------------------------------------
 
-static std::vector<uint32_t> CompileSlangToSpirv(const std::string& source,
-                                                 const std::string& entry,
-                                                 const std::array<uint32_t, 3>& localSize)
+static std::vector<uint32_t> CompileSlangToSpirv(
+  const std::string& source, const std::string& entry,
+  const std::array<uint32_t, 3>& localSize)
 {
   std::filesystem::path tmpdir = std::filesystem::temp_directory_path();
   std::filesystem::path src    = tmpdir / "nvector_vulkan_tmp.slang";
@@ -175,7 +176,8 @@ static std::vector<uint32_t> CompileSlangToSpirv(const std::string& source,
   int rc = std::system(cmd.str().c_str());
   if (rc != 0)
   {
-    throw std::runtime_error("slangc failed when compiling Vulkan NVECTOR shaders");
+    throw std::runtime_error(
+      "slangc failed when compiling Vulkan NVECTOR shaders");
   }
 
   std::ifstream spv_in(spv, std::ios::binary);
@@ -299,26 +301,31 @@ static void DispatchElementwise(ElementwiseOp op, sunrealtype a, sunrealtype b,
   memObjects.push_back(privZ->device_tensor);
   seq->record<kp::OpSyncDevice>(memObjects);
 
-  struct Push { uint32_t op; float a; float b; uint32_t n; };
-  Push push{static_cast<uint32_t>(op), static_cast<float>(a), static_cast<float>(b),
-            static_cast<uint32_t>(NVEC_VULKAN_LENGTH(z))};
+  struct Push
+  {
+    uint32_t op;
+    float a;
+    float b;
+    uint32_t n;
+  };
+
+  Push push{static_cast<uint32_t>(op), static_cast<float>(a),
+            static_cast<float>(b), static_cast<uint32_t>(NVEC_VULKAN_LENGTH(z))};
 
   std::vector<uint8_t> pushConstants(sizeof(Push));
   std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
   auto stream_policy = NVEC_VULKAN_CONTENT(z)->stream_exec_policy;
-  auto algo          = privZ->manager->algorithm(
-                                        memObjects,
-                                        spirv,
-                                        {stream_policy->gridSize(push.n), 1, 1},
-                                        std::vector<uint32_t>{},
-                                        pushConstants);
+  auto algo          = privZ->manager->algorithm(memObjects, spirv,
+                                                 {stream_policy->gridSize(push.n), 1, 1},
+                                                 std::vector<uint32_t>{}, pushConstants);
 
   seq->record<kp::OpAlgoDispatch>(algo);
-  seq->record<kp::OpSyncLocal>({std::static_pointer_cast<kp::Memory>(privZ->device_tensor)});
+  seq->record<kp::OpSyncLocal>(
+    {std::static_pointer_cast<kp::Memory>(privZ->device_tensor)});
   seq->eval();
 
-  privZ->host_buffer = privZ->device_tensor->vector<sunrealtype>();
+  privZ->host_buffer  = privZ->device_tensor->vector<sunrealtype>();
   privZ->host_dirty   = false;
   privZ->device_dirty = false;
   RefreshHostMemoryView(z);
@@ -358,8 +365,8 @@ N_Vector N_VNewEmpty_Vulkan(SUNContext sunctx)
   NVEC_VULKAN_CONTENT(v)->stream_exec_policy = new ExecPolicy(256);
   NVEC_VULKAN_CONTENT(v)->reduce_exec_policy = new AtomicReduceExecPolicy(256);
 
-  auto priv        = NVEC_VULKAN_PRIVATE(v);
-  priv->manager    = GetDefaultManager();
+  auto priv     = NVEC_VULKAN_PRIVATE(v);
+  priv->manager = GetDefaultManager();
   priv->device_tensor.reset();
   priv->host_buffer.clear();
   priv->host_dirty   = true;
@@ -398,17 +405,17 @@ N_Vector N_VNewEmpty_Vulkan(SUNContext sunctx)
 
   // fused ops
   v->ops->nvlinearcombination = N_VLinearCombination_Vulkan;
-  v->ops->nvscaleaddmulti = N_VScaleAddMulti_Vulkan;
-  v->ops->nvdotprodmulti  = N_VDotProdMulti_Vulkan;
+  v->ops->nvscaleaddmulti     = N_VScaleAddMulti_Vulkan;
+  v->ops->nvdotprodmulti      = N_VDotProdMulti_Vulkan;
 
   // vector array operations
-  v->ops->nvlinearsumvectorarray         = N_VLinearSumVectorArray_Vulkan;
-  v->ops->nvscalevectorarray             = N_VScaleVectorArray_Vulkan;
-  v->ops->nvconstvectorarray             = N_VConstVectorArray_Vulkan;
-  v->ops->nvscaleaddmultivectorarray     = N_VScaleAddMultiVectorArray_Vulkan;
+  v->ops->nvlinearsumvectorarray     = N_VLinearSumVectorArray_Vulkan;
+  v->ops->nvscalevectorarray         = N_VScaleVectorArray_Vulkan;
+  v->ops->nvconstvectorarray         = N_VConstVectorArray_Vulkan;
+  v->ops->nvscaleaddmultivectorarray = N_VScaleAddMultiVectorArray_Vulkan;
   v->ops->nvlinearcombinationvectorarray = N_VLinearCombinationVectorArray_Vulkan;
-  v->ops->nvwrmsnormvectorarray          = N_VWrmsNormVectorArray_Vulkan;
-  v->ops->nvwrmsnormmaskvectorarray      = N_VWrmsNormMaskVectorArray_Vulkan;
+  v->ops->nvwrmsnormvectorarray     = N_VWrmsNormVectorArray_Vulkan;
+  v->ops->nvwrmsnormmaskvectorarray = N_VWrmsNormMaskVectorArray_Vulkan;
 
   // optional reductions
   v->ops->nvwsqrsumlocal     = N_VWSqrSumLocal_Vulkan;
@@ -463,12 +470,11 @@ N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdata,
   if (d_vdata != NULL)
   {
     NVEC_VULKAN_PRIVATE(v)->device_tensor =
-      NVEC_VULKAN_PRIVATE(v)->manager->tensor(
-        d_vdata,
-        static_cast<uint32_t>(length),
-        sizeof(sunrealtype),
-        kp::Memory::dataType<sunrealtype>(),
-        kp::Memory::MemoryTypes::eDevice);
+      NVEC_VULKAN_PRIVATE(v)->manager->tensor(d_vdata,
+                                              static_cast<uint32_t>(length),
+                                              sizeof(sunrealtype),
+                                              kp::Memory::dataType<sunrealtype>(),
+                                              kp::Memory::MemoryTypes::eDevice);
     NVEC_VULKAN_PRIVATE(v)->device_dirty = false;
   }
   NVEC_VULKAN_PRIVATE(v)->host_dirty = false;
@@ -490,8 +496,7 @@ void N_VSetDeviceArrayPointer_Vulkan(sunrealtype* d_vdata, N_Vector v)
 {
   auto priv = NVEC_VULKAN_PRIVATE(v);
   priv->device_tensor =
-    priv->manager->tensor(d_vdata,
-                          static_cast<uint32_t>(NVEC_VULKAN_LENGTH(v)),
+    priv->manager->tensor(d_vdata, static_cast<uint32_t>(NVEC_VULKAN_LENGTH(v)),
                           sizeof(sunrealtype),
                           kp::Memory::dataType<sunrealtype>(),
                           kp::Memory::MemoryTypes::eDevice);
@@ -526,7 +531,7 @@ N_Vector N_VCloneEmpty_Vulkan(N_Vector w)
   N_Vector v = N_VNewEmpty_Vulkan(w->sunctx);
   if (v == NULL) { return NULL; }
 
-  NVEC_VULKAN_CONTENT(v)->length = NVEC_VULKAN_CONTENT(w)->length;
+  NVEC_VULKAN_CONTENT(v)->length  = NVEC_VULKAN_CONTENT(w)->length;
   NVEC_VULKAN_PRIVATE(v)->manager = NVEC_VULKAN_PRIVATE(w)->manager;
   RefreshHostMemoryView(v);
   RefreshDeviceMemoryView(v);
@@ -538,8 +543,8 @@ N_Vector N_VClone_Vulkan(N_Vector w)
   N_Vector v = N_VCloneEmpty_Vulkan(w);
   if (v == NULL) { return NULL; }
 
-  NVEC_VULKAN_PRIVATE(v)->host_buffer = NVEC_VULKAN_PRIVATE(w)->host_buffer;
-  NVEC_VULKAN_PRIVATE(v)->host_dirty  = true;
+  NVEC_VULKAN_PRIVATE(v)->host_buffer  = NVEC_VULKAN_PRIVATE(w)->host_buffer;
+  NVEC_VULKAN_PRIVATE(v)->host_dirty   = true;
   NVEC_VULKAN_PRIVATE(v)->device_dirty = false;
   RefreshHostMemoryView(v);
   RefreshDeviceMemoryView(v);
@@ -564,7 +569,10 @@ void N_VDestroy_Vulkan(N_Vector v)
     {
       SUNMemoryHelper_Destroy_Vulkan(NVEC_VULKAN_CONTENT(v)->mem_helper);
     }
-    if (NVEC_VULKAN_CONTENT(v)->host_data) { free(NVEC_VULKAN_CONTENT(v)->host_data); }
+    if (NVEC_VULKAN_CONTENT(v)->host_data)
+    {
+      free(NVEC_VULKAN_CONTENT(v)->host_data);
+    }
     if (NVEC_VULKAN_CONTENT(v)->device_data)
     {
       free(NVEC_VULKAN_CONTENT(v)->device_data);
@@ -647,8 +655,8 @@ sunrealtype N_VWrmsNorm_Vulkan(N_Vector x, N_Vector w)
 {
   CopyDeviceToHost(x);
   CopyDeviceToHost(w);
-  const auto& hx = NVEC_VULKAN_PRIVATE(x)->host_buffer;
-  const auto& hw = NVEC_VULKAN_PRIVATE(w)->host_buffer;
+  const auto& hx  = NVEC_VULKAN_PRIVATE(x)->host_buffer;
+  const auto& hw  = NVEC_VULKAN_PRIVATE(w)->host_buffer;
   sunrealtype sum = ZERO;
   for (size_t i = 0; i < hx.size(); ++i)
   {
@@ -663,10 +671,10 @@ sunrealtype N_VWrmsNormMask_Vulkan(N_Vector x, N_Vector w, N_Vector id)
   CopyDeviceToHost(x);
   CopyDeviceToHost(w);
   CopyDeviceToHost(id);
-  const auto& hx  = NVEC_VULKAN_PRIVATE(x)->host_buffer;
-  const auto& hw  = NVEC_VULKAN_PRIVATE(w)->host_buffer;
-  const auto& hid = NVEC_VULKAN_PRIVATE(id)->host_buffer;
-  sunrealtype sum = ZERO;
+  const auto& hx   = NVEC_VULKAN_PRIVATE(x)->host_buffer;
+  const auto& hw   = NVEC_VULKAN_PRIVATE(w)->host_buffer;
+  const auto& hid  = NVEC_VULKAN_PRIVATE(id)->host_buffer;
+  sunrealtype sum  = ZERO;
   sunindextype cnt = 0;
   for (size_t i = 0; i < hx.size(); ++i)
   {
@@ -691,8 +699,8 @@ sunrealtype N_VWL2Norm_Vulkan(N_Vector x, N_Vector w)
 {
   CopyDeviceToHost(x);
   CopyDeviceToHost(w);
-  const auto& hx = NVEC_VULKAN_PRIVATE(x)->host_buffer;
-  const auto& hw = NVEC_VULKAN_PRIVATE(w)->host_buffer;
+  const auto& hx  = NVEC_VULKAN_PRIVATE(x)->host_buffer;
+  const auto& hw  = NVEC_VULKAN_PRIVATE(w)->host_buffer;
   sunrealtype sum = ZERO;
   for (size_t i = 0; i < hx.size(); ++i) sum += hx[i] * hx[i] * hw[i] * hw[i];
   return std::sqrt(sum);
@@ -701,7 +709,7 @@ sunrealtype N_VWL2Norm_Vulkan(N_Vector x, N_Vector w)
 sunrealtype N_VL1Norm_Vulkan(N_Vector x)
 {
   CopyDeviceToHost(x);
-  const auto& hx = NVEC_VULKAN_PRIVATE(x)->host_buffer;
+  const auto& hx  = NVEC_VULKAN_PRIVATE(x)->host_buffer;
   sunrealtype sum = ZERO;
   for (auto v : hx) sum += std::abs(v);
   return sum;
@@ -717,19 +725,16 @@ sunbooleantype N_VInvTest_Vulkan(N_Vector x, N_Vector z)
   CopyDeviceToHost(x);
   auto& hz = NVEC_VULKAN_PRIVATE(z)->host_buffer;
   hz.resize(NVEC_VULKAN_LENGTH(x));
-  const auto& hx = NVEC_VULKAN_PRIVATE(x)->host_buffer;
+  const auto& hx        = NVEC_VULKAN_PRIVATE(x)->host_buffer;
   sunbooleantype result = SUNTRUE;
   for (size_t i = 0; i < hx.size(); ++i)
   {
     if (hx[i] == ZERO)
     {
-      hz[i] = ZERO;
+      hz[i]  = ZERO;
       result = SUNFALSE;
     }
-    else
-    {
-      hz[i] = ONE / hx[i];
-    }
+    else { hz[i] = ONE / hx[i]; }
   }
   RefreshHostMemoryView(z);
   MarkDeviceDirty(z);
@@ -764,8 +769,8 @@ sunrealtype N_VMinQuotient_Vulkan(N_Vector num, N_Vector denom)
 {
   CopyDeviceToHost(num);
   CopyDeviceToHost(denom);
-  const auto& hn = NVEC_VULKAN_PRIVATE(num)->host_buffer;
-  const auto& hd = NVEC_VULKAN_PRIVATE(denom)->host_buffer;
+  const auto& hn  = NVEC_VULKAN_PRIVATE(num)->host_buffer;
+  const auto& hd  = NVEC_VULKAN_PRIVATE(denom)->host_buffer;
   sunrealtype min = std::numeric_limits<sunrealtype>::infinity();
   for (size_t i = 0; i < hn.size(); ++i)
   {
@@ -823,7 +828,7 @@ SUNErrCode N_VDotProdMulti_Vulkan(int nvec, N_Vector x, N_Vector* Y,
   {
     CopyDeviceToHost(Y[j]);
     const auto& hy = NVEC_VULKAN_PRIVATE(Y[j])->host_buffer;
-    dotprods[j]     = std::inner_product(hx.begin(), hx.end(), hy.begin(), ZERO);
+    dotprods[j]    = std::inner_product(hx.begin(), hx.end(), hy.begin(), ZERO);
   }
   return SUN_SUCCESS;
 }
@@ -835,7 +840,10 @@ SUNErrCode N_VDotProdMulti_Vulkan(int nvec, N_Vector x, N_Vector* Y,
 SUNErrCode N_VLinearSumVectorArray_Vulkan(int nvec, sunrealtype a, N_Vector* X,
                                           sunrealtype b, N_Vector* Y, N_Vector* Z)
 {
-  for (int j = 0; j < nvec; j++) { N_VLinearSum_Vulkan(a, X[j], b, Y[j], Z[j]); }
+  for (int j = 0; j < nvec; j++)
+  {
+    N_VLinearSum_Vulkan(a, X[j], b, Y[j], Z[j]);
+  }
   return SUN_SUCCESS;
 }
 
@@ -852,9 +860,9 @@ SUNErrCode N_VConstVectorArray_Vulkan(int nvec, sunrealtype c, N_Vector* Z)
   return SUN_SUCCESS;
 }
 
-SUNErrCode N_VScaleAddMultiVectorArray_Vulkan(int nvec, int nsum, sunrealtype* a,
-                                              N_Vector* X, N_Vector** Y,
-                                              N_Vector** Z)
+SUNErrCode N_VScaleAddMultiVectorArray_Vulkan(int nvec, int nsum,
+                                              sunrealtype* a, N_Vector* X,
+                                              N_Vector** Y, N_Vector** Z)
 {
   for (int j = 0; j < nvec; j++)
   {
@@ -899,8 +907,8 @@ sunrealtype N_VWSqrSumLocal_Vulkan(N_Vector x, N_Vector w)
 {
   CopyDeviceToHost(x);
   CopyDeviceToHost(w);
-  const auto& hx = NVEC_VULKAN_PRIVATE(x)->host_buffer;
-  const auto& hw = NVEC_VULKAN_PRIVATE(w)->host_buffer;
+  const auto& hx  = NVEC_VULKAN_PRIVATE(x)->host_buffer;
+  const auto& hw  = NVEC_VULKAN_PRIVATE(w)->host_buffer;
   sunrealtype sum = ZERO;
   for (size_t i = 0; i < hx.size(); ++i) sum += hx[i] * hx[i] * hw[i] * hw[i];
   return sum;
@@ -954,10 +962,7 @@ SUNErrCode N_VBufUnpack_Vulkan(N_Vector x, void* buf)
 // Debug print
 // ---------------------------------------------------------------------------
 
-void N_VPrint_Vulkan(N_Vector v)
-{
-  N_VPrintFile_Vulkan(v, stdout);
-}
+void N_VPrint_Vulkan(N_Vector v) { N_VPrintFile_Vulkan(v, stdout); }
 
 void N_VPrintFile_Vulkan(N_Vector v, FILE* outfile)
 {

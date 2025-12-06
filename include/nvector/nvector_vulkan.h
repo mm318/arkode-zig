@@ -35,10 +35,8 @@ SUNDIALS_EXPORT N_Vector N_VNew_Vulkan(sunindextype length, SUNContext sunctx);
 SUNDIALS_EXPORT N_Vector N_VNewWithMemHelp_Vulkan(sunindextype length,
                                                   SUNMemoryHelper helper,
                                                   SUNContext sunctx);
-SUNDIALS_EXPORT N_Vector N_VMake_Vulkan(sunindextype length,
-                                        sunrealtype* h_vdata,
-                                        sunrealtype* d_vdata,
-                                        SUNContext sunctx);
+SUNDIALS_EXPORT N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdata,
+                                        sunrealtype* d_vdata, SUNContext sunctx);
 
 SUNDIALS_EXPORT void N_VSetHostArrayPointer_Vulkan(sunrealtype* h_vdata,
                                                    N_Vector v);
@@ -84,8 +82,8 @@ SUNDIALS_EXPORT void N_VSpace_Vulkan(N_Vector v, sunindextype* lrw,
                                      sunindextype* liw);
 
 /* standard vector operations */
-SUNDIALS_EXPORT void N_VLinearSum_Vulkan(sunrealtype a, N_Vector x, sunrealtype b,
-                                         N_Vector y, N_Vector z);
+SUNDIALS_EXPORT void N_VLinearSum_Vulkan(sunrealtype a, N_Vector x,
+                                         sunrealtype b, N_Vector y, N_Vector z);
 SUNDIALS_EXPORT void N_VConst_Vulkan(sunrealtype c, N_Vector z);
 SUNDIALS_EXPORT void N_VProd_Vulkan(N_Vector x, N_Vector y, N_Vector z);
 SUNDIALS_EXPORT void N_VDiv_Vulkan(N_Vector x, N_Vector y, N_Vector z);
@@ -148,7 +146,8 @@ SUNDIALS_EXPORT SUNErrCode N_VBufUnpack_Vulkan(N_Vector x, void* buf);
 SUNDIALS_EXPORT void N_VPrint_Vulkan(N_Vector v);
 SUNDIALS_EXPORT void N_VPrintFile_Vulkan(N_Vector v, FILE* outfile);
 
-SUNDIALS_EXPORT SUNErrCode N_VEnableFusedOps_Vulkan(N_Vector v, sunbooleantype tf);
+SUNDIALS_EXPORT SUNErrCode N_VEnableFusedOps_Vulkan(N_Vector v,
+                                                    sunbooleantype tf);
 SUNDIALS_EXPORT SUNErrCode N_VEnableLinearCombination_Vulkan(N_Vector v,
                                                              sunbooleantype tf);
 SUNDIALS_EXPORT SUNErrCode N_VEnableScaleAddMulti_Vulkan(N_Vector v,
@@ -163,12 +162,12 @@ SUNDIALS_EXPORT SUNErrCode N_VEnableConstVectorArray_Vulkan(N_Vector v,
                                                             sunbooleantype tf);
 SUNDIALS_EXPORT SUNErrCode N_VEnableWrmsNormVectorArray_Vulkan(N_Vector v,
                                                                sunbooleantype tf);
-SUNDIALS_EXPORT SUNErrCode N_VEnableWrmsNormMaskVectorArray_Vulkan(
-  N_Vector v, sunbooleantype tf);
-SUNDIALS_EXPORT SUNErrCode N_VEnableScaleAddMultiVectorArray_Vulkan(
-  N_Vector v, sunbooleantype tf);
-SUNDIALS_EXPORT SUNErrCode N_VEnableLinearCombinationVectorArray_Vulkan(
-  N_Vector v, sunbooleantype tf);
+SUNDIALS_EXPORT SUNErrCode
+N_VEnableWrmsNormMaskVectorArray_Vulkan(N_Vector v, sunbooleantype tf);
+SUNDIALS_EXPORT SUNErrCode
+N_VEnableScaleAddMultiVectorArray_Vulkan(N_Vector v, sunbooleantype tf);
+SUNDIALS_EXPORT SUNErrCode
+N_VEnableLinearCombinationVectorArray_Vulkan(N_Vector v, sunbooleantype tf);
 
 #ifdef __cplusplus
 }

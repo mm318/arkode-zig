@@ -230,19 +230,13 @@ int main(int argc, char* argv[])
   {
     fails += Test_N_VWSqrSumLocal(X, Y, length, 0);
   }
-  else
-  {
-    printf("SKIP: N_VWSqrSumLocal not implemented\n");
-  }
+  else { printf("SKIP: N_VWSqrSumLocal not implemented\n"); }
 
   if (X->ops->nvwsqrsummasklocal)
   {
     fails += Test_N_VWSqrSumMaskLocal(X, Y, Z, length, 0);
   }
-  else
-  {
-    printf("SKIP: N_VWSqrSumMaskLocal not implemented\n");
-  }
+  else { printf("SKIP: N_VWSqrSumMaskLocal not implemented\n"); }
 
   /* XBraid interface operations */
   printf("\nTesting XBraid interface operations:\n\n");

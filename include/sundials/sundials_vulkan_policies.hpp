@@ -19,8 +19,12 @@ namespace vulkan {
 class ExecPolicy
 {
 public:
-  explicit ExecPolicy(uint32_t workgroupSize = 256u) : workgroupSize_(workgroupSize) {}
+  explicit ExecPolicy(uint32_t workgroupSize = 256u)
+    : workgroupSize_(workgroupSize)
+  {}
+
   ExecPolicy(const ExecPolicy& other) : workgroupSize_(other.workgroupSize_) {}
+
   virtual ~ExecPolicy() = default;
 
   virtual uint32_t blockSize(std::size_t /*numWorkUnits*/ = 0,
@@ -33,7 +37,8 @@ public:
                             std::size_t /*blockDim*/ = 0) const
   {
     if (numWorkUnits == 0) { return 1; }
-    return static_cast<uint32_t>((numWorkUnits + workgroupSize_ - 1) / workgroupSize_);
+    return static_cast<uint32_t>((numWorkUnits + workgroupSize_ - 1) /
+                                 workgroupSize_);
   }
 
   virtual bool atomic() const { return false; }
@@ -67,7 +72,10 @@ public:
 
   bool atomic() const override { return true; }
 
-  ExecPolicy* clone() const override { return new AtomicReduceExecPolicy(*this); }
+  ExecPolicy* clone() const override
+  {
+    return new AtomicReduceExecPolicy(*this);
+  }
 
 private:
   uint32_t gridSize_;
@@ -76,7 +84,7 @@ private:
 } // namespace vulkan
 } // namespace sundials
 
-using SUNVulkanExecPolicy        = sundials::vulkan::ExecPolicy;
-using SUNVulkanAtomicExecPolicy  = sundials::vulkan::AtomicReduceExecPolicy;
+using SUNVulkanExecPolicy       = sundials::vulkan::ExecPolicy;
+using SUNVulkanAtomicExecPolicy = sundials::vulkan::AtomicReduceExecPolicy;
 
 #endif

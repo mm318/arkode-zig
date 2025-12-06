@@ -54,8 +54,8 @@ SUNMemoryHelper SUNMemoryHelper_Vulkan(SUNContext sunctx)
   helper->ops->clone         = SUNMemoryHelper_Clone_Vulkan;
   helper->ops->destroy       = SUNMemoryHelper_Destroy_Vulkan;
 
-  helper->content =
-    (SUNMemoryHelper_Content_Vulkan*)malloc(sizeof(SUNMemoryHelper_Content_Vulkan));
+  helper->content = (SUNMemoryHelper_Content_Vulkan*)malloc(
+    sizeof(SUNMemoryHelper_Content_Vulkan));
   SUNAssertNull(helper->content, SUN_ERR_MALLOC_FAIL);
 
   SUNHELPER_CONTENT(helper)->manager = GetHelperManager();
@@ -68,9 +68,9 @@ SUNMemoryHelper SUNMemoryHelper_Clone_Vulkan(SUNMemoryHelper helper)
   return SUNMemoryHelper_Vulkan(helper->sunctx);
 }
 
-SUNErrCode SUNMemoryHelper_Alloc_Vulkan(SUNMemoryHelper helper, SUNMemory* memptr,
-                                        size_t mem_size, SUNMemoryType mem_type,
-                                        void* /*queue*/)
+SUNErrCode SUNMemoryHelper_Alloc_Vulkan(SUNMemoryHelper helper,
+                                        SUNMemory* memptr, size_t mem_size,
+                                        SUNMemoryType mem_type, void* /*queue*/)
 {
   SUNFunctionBegin(helper->sunctx);
 
@@ -115,13 +115,14 @@ SUNErrCode SUNMemoryHelper_Alloc_Vulkan(SUNMemoryHelper helper, SUNMemory* mempt
 }
 
 SUNErrCode SUNMemoryHelper_AllocStrided_Vulkan(SUNMemoryHelper helper,
-                                               SUNMemory* memptr, size_t mem_size,
-                                               size_t stride, SUNMemoryType mem_type,
+                                               SUNMemory* memptr,
+                                               size_t mem_size, size_t stride,
+                                               SUNMemoryType mem_type,
                                                void* queue)
 {
   // Allocate contiguous storage; stride unused in this minimal helper.
-  return SUNMemoryHelper_Alloc_Vulkan(helper, memptr, mem_size * stride, mem_type,
-                                      queue);
+  return SUNMemoryHelper_Alloc_Vulkan(helper, memptr, mem_size * stride,
+                                      mem_type, queue);
 }
 
 SUNErrCode SUNMemoryHelper_Dealloc_Vulkan(SUNMemoryHelper helper, SUNMemory mem,
@@ -137,10 +138,7 @@ SUNErrCode SUNMemoryHelper_Dealloc_Vulkan(SUNMemoryHelper helper, SUNMemory mem,
     {
       SUNHELPER_CONTENT(helper)->num_deallocations_device++;
     }
-    else
-    {
-      SUNHELPER_CONTENT(helper)->num_deallocations_host++;
-    }
+    else { SUNHELPER_CONTENT(helper)->num_deallocations_host++; }
   }
 
   free(mem);
@@ -158,9 +156,9 @@ SUNErrCode SUNMemoryHelper_Copy_Vulkan(SUNMemoryHelper helper, SUNMemory dst,
   return SUN_SUCCESS;
 }
 
-SUNErrCode SUNMemoryHelper_CopyAsync_Vulkan(SUNMemoryHelper helper, SUNMemory dst,
-                                            SUNMemory src, size_t memory_size,
-                                            void* queue)
+SUNErrCode SUNMemoryHelper_CopyAsync_Vulkan(SUNMemoryHelper helper,
+                                            SUNMemory dst, SUNMemory src,
+                                            size_t memory_size, void* queue)
 {
   // No async path; fall back to sync copy.
   return SUNMemoryHelper_Copy_Vulkan(helper, dst, src, memory_size, queue);
@@ -186,19 +184,16 @@ SUNErrCode SUNMemoryHelper_GetAllocStats_Vulkan(SUNMemoryHelper helper,
     *num_allocations   = SUNHELPER_CONTENT(helper)->num_allocations_device;
     *num_deallocations = SUNHELPER_CONTENT(helper)->num_deallocations_device;
     *bytes_allocated   = SUNHELPER_CONTENT(helper)->bytes_allocated_device;
-    *bytes_high_watermark =
-      SUNHELPER_CONTENT(helper)->bytes_high_watermark_device;
+    *bytes_high_watermark = SUNHELPER_CONTENT(helper)->bytes_high_watermark_device;
   }
   else
   {
     *num_allocations   = SUNHELPER_CONTENT(helper)->num_allocations_host;
     *num_deallocations = SUNHELPER_CONTENT(helper)->num_deallocations_host;
     *bytes_allocated   = SUNHELPER_CONTENT(helper)->bytes_allocated_host;
-    *bytes_high_watermark =
-      SUNHELPER_CONTENT(helper)->bytes_high_watermark_host;
+    *bytes_high_watermark = SUNHELPER_CONTENT(helper)->bytes_high_watermark_host;
   }
   return SUN_SUCCESS;
 }
 
 } // extern "C"
-
