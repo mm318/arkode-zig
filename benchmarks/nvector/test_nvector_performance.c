@@ -29,9 +29,9 @@
 #include <unistd.h>
 #endif
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <sundials/sundials_math.h>
 #include <sundials/sundials_nvector.h>
 #include <sundials/sundials_types.h>
@@ -2759,7 +2759,7 @@ void rand_realtype(sunrealtype* data, sunindextype len, sunrealtype lower,
   sunrealtype range;
 
   /* fill array with random data between lower and upper */
-  range = upper - lower;
+  range      = upper - lower;
   rand_state = ((uint64_t)time(NULL)) & rand_max;
   for (i = 0; i < len; i++)
   {
@@ -2785,7 +2785,7 @@ void rand_realtype_zero_one(sunrealtype* data, sunindextype len)
   for (i = 0; i < len; i++)
   {
     rand_state = (1103515245ull * rand_state + 12345u) & rand_max;
-    data[i] = (sunrealtype)(rand_state % 2);
+    data[i]    = (sunrealtype)(rand_state % 2);
   }
 
   return;
@@ -2806,7 +2806,7 @@ void rand_realtype_constraints(sunrealtype* data, sunindextype len)
   for (i = 0; i < len; i++)
   {
     rand_state = (1103515245ull * rand_state + 12345u) & rand_max;
-    data[i] = (sunrealtype)(rand_state % 5 - 2);
+    data[i]    = (sunrealtype)(rand_state % 5 - 2);
   }
 
   return;

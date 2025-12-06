@@ -93,7 +93,7 @@ public:
       fixed_h(ZERO),
       maxsteps(10000),
       output(1),
-      nout(10){};
+      nout(10) {};
 
 }; // end ARKODEParameters
 
@@ -131,7 +131,7 @@ public:
       xr(ONE),
       dx(ZERO),
       gamma(SUN_RCONST(1.4)),
-      flux(nullptr){};
+      flux(nullptr) {};
 
   // manual destructor
   void FreeData()

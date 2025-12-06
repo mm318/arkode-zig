@@ -1593,14 +1593,9 @@ int arkStep_FullRHS(ARKodeMem ark_mem, sunrealtype t, N_Vector y, N_Vector f,
     { /* ImEx */
       N_VLinearSum(ONE, step_mem->sdata, ONE, ark_mem->tempv2, f);
     }
-    else if (step_mem->implicit)
-    { /* implicit */
-      N_VScale(ONE, step_mem->sdata, f);
-    }
-    else
-    { /* explicit */
-      N_VScale(ONE, ark_mem->tempv2, f);
-    }
+    else if (step_mem->implicit) { /* implicit */
+                                   N_VScale(ONE, step_mem->sdata, f); }
+    else { /* explicit */ N_VScale(ONE, ark_mem->tempv2, f); }
 
     /* compute M^{-1} f for output but do not store */
     if (step_mem->mass_type != MASS_IDENTITY)

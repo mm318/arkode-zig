@@ -850,18 +850,12 @@ int mriStepCoupling_GetStageType(MRIStepCoupling MRIC, int is)
   }
   if (Gdiag)
   { /* DIRK */
-    if (cdiff)
-    { /* Fast */
-      return (MRISTAGE_DIRK_FAST);
-    }
+    if (cdiff) { /* Fast */ return (MRISTAGE_DIRK_FAST); }
     else { return (MRISTAGE_DIRK_NOFAST); }
   }
   else
   { /* ERK */
-    if (cdiff)
-    { /* Fast */
-      return (MRISTAGE_ERK_FAST);
-    }
+    if (cdiff) { /* Fast */ return (MRISTAGE_ERK_FAST); }
     else { return (MRISTAGE_ERK_NOFAST); }
   }
 }
