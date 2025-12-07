@@ -32,8 +32,9 @@ typedef struct SUNMemoryHelper_Content_Vulkan_ SUNMemoryHelper_Content_Vulkan;
 
 static std::shared_ptr<kp::Manager> GetHelperManager()
 {
-  static std::shared_ptr<kp::Manager> mgr = std::make_shared<kp::Manager>();
-  return mgr;
+  // Share the global Kompute manager so we don't spin up multiple Vulkan
+  // instances (and avoid duplicate validation layer setup).
+  return SUNDIALS_VK_GetSharedManager();
 }
 
 extern "C" {

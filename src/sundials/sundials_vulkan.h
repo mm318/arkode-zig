@@ -9,10 +9,28 @@
 
 #include <cassert>
 #include <kompute/Kompute.hpp>
+#include <memory>
 #include <sundials/sundials_types.h>
 #include <vulkan/vulkan.h>
 
 #ifdef __cplusplus /* wrapper to enable C++ usage */
+
+// Shared Kompute manager used by all Vulkan helper components.
+inline kp::Manager* SUNDIALS_VK_GetManager()
+{
+  // kp::Manager must be a singleton
+  static kp::Manager mgr;
+  return &mgr;
+}
+
+// Alias the shared manager without taking ownership.
+inline std::shared_ptr<kp::Manager> SUNDIALS_VK_GetSharedManager()
+{
+  static std::shared_ptr<kp::Manager> mgr(SUNDIALS_VK_GetManager(),
+                                          [](kp::Manager*) {});
+  return mgr;
+}
+
 extern "C" {
 #endif
 

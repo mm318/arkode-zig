@@ -17,6 +17,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -49,7 +50,7 @@ using namespace sundials::vulkan;
 
 struct _N_PrivateVectorContent_Vulkan
 {
-  kp::Manager* manager;
+  std::shared_ptr<kp::Manager> manager;
   std::shared_ptr<kp::Tensor> device_tensor;
   std::vector<sunrealtype> host_buffer;
   bool host_dirty{true};
@@ -57,12 +58,6 @@ struct _N_PrivateVectorContent_Vulkan
 };
 
 typedef struct _N_PrivateVectorContent_Vulkan* N_PrivateVectorContent_Vulkan;
-
-static kp::Manager* GetDefaultManager()
-{
-  static kp::Manager mgr;
-  return &mgr;
-}
 
 static void RefreshHostMemoryView(N_Vector v)
 {
@@ -350,12 +345,13 @@ N_Vector N_VNewEmpty_Vulkan(SUNContext sunctx)
     return NULL;
   }
 
-  NVEC_VULKAN_CONTENT(v)->priv = malloc(sizeof(_N_PrivateVectorContent_Vulkan));
-  if (NVEC_VULKAN_CONTENT(v)->priv == NULL)
+  auto* priv = new (std::nothrow) _N_PrivateVectorContent_Vulkan();
+  if (priv == nullptr)
   {
     N_VDestroy(v);
     return NULL;
   }
+  NVEC_VULKAN_CONTENT(v)->priv = priv;
 
   NVEC_VULKAN_CONTENT(v)->length             = 0;
   NVEC_VULKAN_CONTENT(v)->host_data          = NULL;
@@ -365,12 +361,7 @@ N_Vector N_VNewEmpty_Vulkan(SUNContext sunctx)
   NVEC_VULKAN_CONTENT(v)->stream_exec_policy = new ExecPolicy(256);
   NVEC_VULKAN_CONTENT(v)->reduce_exec_policy = new AtomicReduceExecPolicy(256);
 
-  auto priv     = NVEC_VULKAN_PRIVATE(v);
-  priv->manager = GetDefaultManager();
-  priv->device_tensor.reset();
-  priv->host_buffer.clear();
-  priv->host_dirty   = true;
-  priv->device_dirty = false;
+  priv->manager = SUNDIALS_VK_GetSharedManager();
 
   // Attach operations
   v->ops->nvgetvectorid           = N_VGetVectorID_Vulkan;
@@ -557,10 +548,7 @@ void N_VDestroy_Vulkan(N_Vector v)
   if (v == NULL) { return; }
   if (v->content)
   {
-    auto priv = NVEC_VULKAN_PRIVATE(v);
-    priv->device_tensor.reset();
-    priv->host_buffer.clear();
-    free(priv);
+    delete NVEC_VULKAN_PRIVATE(v);
 
     delete NVEC_VULKAN_CONTENT(v)->stream_exec_policy;
     delete NVEC_VULKAN_CONTENT(v)->reduce_exec_policy;
