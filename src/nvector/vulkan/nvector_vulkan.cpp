@@ -290,9 +290,11 @@ static void DispatchElementwise(ElementwiseOp op, sunrealtype a, sunrealtype b,
 
   // Sync inputs and outputs
   std::vector<std::shared_ptr<kp::Memory>> memObjects;
-  memObjects.reserve(y ? 3 : 2);
+  memObjects.reserve(3);
   memObjects.push_back(privX->device_tensor);
-  if (y) memObjects.push_back(privY->device_tensor);
+  // Always provide three bindings to match the shader layout; reuse X when Y is absent.
+  if (y) { memObjects.push_back(privY->device_tensor); }
+  else { memObjects.push_back(privX->device_tensor); }
   memObjects.push_back(privZ->device_tensor);
   seq->record<kp::OpSyncDevice>(memObjects);
 
