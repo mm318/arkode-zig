@@ -192,43 +192,64 @@ static std::vector<uint32_t> CompileSlangToSpirv(
 
 static const std::string& ElementwiseShaderSource()
 {
-  static const std::string src = R"(
-        // Elementwise operations controlled via push constants.
-        struct Params {
-            uint op;
-            float a;
-            float b;
-            uint n;
-        };
+  static std::once_flag once;
 
-        [[vk::push_constant]]
-        ConstantBuffer<Params> params;
+  static std::string src;
 
-        [[vk::binding(0,0)]] RWStructuredBuffer<float> X;
-        [[vk::binding(1,0)]] RWStructuredBuffer<float> Y;
-        [[vk::binding(2,0)]] RWStructuredBuffer<float> Z;
+  std::call_once(once,
+                 []()
+                 {
+                   const char* real = (sizeof(sunrealtype) == sizeof(double))
+                                        ? "double"
+                                        : "float";
 
-        [numthreads(LOCAL_SIZE_X, LOCAL_SIZE_Y, LOCAL_SIZE_Z)]
-        void main(uint3 dtid : SV_DispatchThreadID)
-        {
-            uint i = dtid.x;
-            if (i >= params.n) return;
+                   src = fmt::format(R"(
+// Elementwise operations controlled via push constants.
+struct Params {{
+    uint op;
+    float a;
+    float b;
+    uint n;
+}};
 
-            switch (params.op)
-            {
-            case 0: Z[i] = params.a * X[i] + params.b * Y[i]; break; // linear sum
-            case 1: Z[i] = params.a; break; // const
-            case 2: Z[i] = X[i] * Y[i]; break; // prod
-            case 3: Z[i] = X[i] / Y[i]; break; // div
-            case 4: Z[i] = params.a * X[i]; break; // scale
-            case 5: Z[i] = abs(X[i]); break; // abs
-            case 6: Z[i] = 1.0 / X[i]; break; // inv
-            case 7: Z[i] = X[i] + params.a; break; // add const
-            case 8: Z[i] = (abs(X[i]) >= params.a) ? 1.0 : 0.0; break; // compare
-            default: Z[i] = X[i]; break;
-            }
-        }
-    )";
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<{}> X;
+[[vk::binding(1,0)]] RWStructuredBuffer<{}> Y;
+[[vk::binding(2,0)]] RWStructuredBuffer<{}> Z;
+
+[numthreads(LOCAL_SIZE_X, LOCAL_SIZE_Y, LOCAL_SIZE_Z)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{{
+    uint i = dtid.x;
+    if (i >= params.n) return;
+
+    {} a = ({})(params.a);
+    {} b = ({})(params.b);
+
+    switch (params.op)
+    {{
+    case 0: Z[i] = a * X[i] + b * Y[i]; break; // linear sum
+    case 1: Z[i] = a; break; // const
+    case 2: Z[i] = X[i] * Y[i]; break; // prod
+    case 3: Z[i] = X[i] / Y[i]; break; // div
+    case 4: Z[i] = a * X[i]; break; // scale
+    case 5: Z[i] = abs(X[i]); break; // abs
+    case 6: Z[i] = ({})(1.0) / X[i]; break; // inv
+    case 7: Z[i] = X[i] + a; break; // add const
+    case 8: Z[i] = (abs(X[i]) >= a) 
+                    ? ({})(1.0)
+                    : ({})(0.0);
+                    break; // compare
+    default: Z[i] = X[i]; break;
+    }}
+}}
+                  )",
+                                     real, real, real, real, real, real, real,
+                                     real, real, real);
+                 });
+
   return src;
 }
 
