@@ -22,6 +22,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include <kompute/Kompute.hpp>
@@ -45,10 +46,8 @@ using namespace sundials::vulkan;
 #define NVEC_VULKAN_CONTENT(x) ((N_VectorContent_Vulkan)(x->content))
 #define NVEC_VULKAN_LENGTH(x)  (NVEC_VULKAN_CONTENT(x)->length)
 #define NVEC_VULKAN_MEMHELP(x) (NVEC_VULKAN_CONTENT(x)->mem_helper)
-#define NVEC_VULKAN_PRIVATE(x) \
-  ((N_PrivateVectorContent_Vulkan)(NVEC_VULKAN_CONTENT(x)->priv))
 
-struct _N_PrivateVectorContent_Vulkan
+struct PrivateVectorContent_Vulkan
 {
   std::shared_ptr<kp::Manager> manager;
   std::shared_ptr<kp::Tensor> device_tensor;
@@ -57,7 +56,8 @@ struct _N_PrivateVectorContent_Vulkan
   bool device_dirty{false};
 };
 
-typedef struct _N_PrivateVectorContent_Vulkan* N_PrivateVectorContent_Vulkan;
+#define NVEC_VULKAN_PRIVATE(x) \
+  (static_cast<PrivateVectorContent_Vulkan*>(NVEC_VULKAN_CONTENT(x)->priv))
 
 static void RefreshHostMemoryView(N_Vector v)
 {
@@ -73,20 +73,6 @@ static void RefreshHostMemoryView(N_Vector v)
   mem->type  = SUNMEMTYPE_HOST;
 }
 
-static void RefreshDeviceMemoryView(N_Vector v)
-{
-  SUNMemory mem = NVEC_VULKAN_CONTENT(v)->device_data;
-  if (mem == NULL)
-  {
-    mem                                 = SUNMemoryNewEmpty(v->sunctx);
-    NVEC_VULKAN_CONTENT(v)->device_data = mem;
-  }
-  mem->ptr   = (void*)NVEC_VULKAN_PRIVATE(v)->host_buffer.data();
-  mem->bytes = NVEC_VULKAN_LENGTH(v) * sizeof(sunrealtype);
-  mem->own   = SUNFALSE;
-  mem->type  = SUNMEMTYPE_DEVICE;
-}
-
 static void MarkHostDirty(N_Vector v)
 {
   NVEC_VULKAN_PRIVATE(v)->host_dirty   = true;
@@ -99,17 +85,76 @@ static void MarkDeviceDirty(N_Vector v)
   NVEC_VULKAN_PRIVATE(v)->host_dirty   = false;
 }
 
+// Shader runs in single precision; convert at the boundaries when sunrealtype differs.
+template<typename T>
+static std::vector<T> ToShaderBuffer(const std::vector<sunrealtype>& src)
+{
+  if constexpr (std::is_same_v<T, sunrealtype>) { return src; }
+  else
+  {
+    std::vector<T> dst(src.size());
+    std::transform(src.begin(), src.end(), dst.begin(),
+                   [](sunrealtype v) { return static_cast<T>(v); });
+    return dst;
+  }
+}
+
+template<typename T>
+static void FromShaderBuffer(const std::vector<T>& src,
+                             std::vector<sunrealtype>& dst)
+{
+  if constexpr (std::is_same_v<T, sunrealtype>) { dst = src; }
+  else
+  {
+    dst.resize(src.size());
+    std::transform(src.begin(), src.end(), dst.begin(),
+                   [](T v) { return static_cast<sunrealtype>(v); });
+  }
+}
+
+using ShaderFloat = float;
+
+static constexpr bool kShaderMatchesSunreal =
+  std::is_same_v<ShaderFloat, sunrealtype>;
+
+static void RefreshDeviceMemoryView(N_Vector v)
+{
+  SUNMemory mem = NVEC_VULKAN_CONTENT(v)->device_data;
+  if (mem == NULL)
+  {
+    mem                                 = SUNMemoryNewEmpty(v->sunctx);
+    NVEC_VULKAN_CONTENT(v)->device_data = mem;
+  }
+  mem->ptr   = (void*)NVEC_VULKAN_PRIVATE(v)->host_buffer.data();
+  mem->bytes = NVEC_VULKAN_LENGTH(v) * sizeof(ShaderFloat);
+  mem->own   = SUNFALSE;
+  mem->type  = SUNMEMTYPE_DEVICE;
+}
+
 static void EnsureTensor(N_Vector v)
 {
   auto priv = NVEC_VULKAN_PRIVATE(v);
   if (!priv->device_tensor)
   {
-    priv->device_tensor =
-      priv->manager->tensor(priv->host_buffer.data(),
-                            static_cast<uint32_t>(NVEC_VULKAN_LENGTH(v)),
-                            sizeof(sunrealtype),
-                            kp::Memory::dataType<sunrealtype>(),
-                            kp::Memory::MemoryTypes::eDevice);
+    if constexpr (kShaderMatchesSunreal)
+    {
+      priv->device_tensor =
+        priv->manager->tensor(priv->host_buffer.data(),
+                              static_cast<uint32_t>(NVEC_VULKAN_LENGTH(v)),
+                              sizeof(ShaderFloat),
+                              kp::Memory::dataType<ShaderFloat>(),
+                              kp::Memory::MemoryTypes::eDevice);
+    }
+    else
+    {
+      auto shader_init = ToShaderBuffer<ShaderFloat>(priv->host_buffer);
+      priv->device_tensor =
+        priv->manager->tensor(shader_init.empty() ? nullptr : shader_init.data(),
+                              static_cast<uint32_t>(NVEC_VULKAN_LENGTH(v)),
+                              sizeof(ShaderFloat),
+                              kp::Memory::dataType<ShaderFloat>(),
+                              kp::Memory::MemoryTypes::eDevice);
+    }
   }
 }
 
@@ -118,7 +163,14 @@ static void CopyHostToDevice(N_Vector v)
   auto priv = NVEC_VULKAN_PRIVATE(v);
   if (!priv->host_dirty) { return; }
   EnsureTensor(v);
-  priv->device_tensor->setData(priv->host_buffer);
+  if constexpr (kShaderMatchesSunreal)
+  {
+    priv->device_tensor->setData(priv->host_buffer);
+  }
+  else
+  {
+    priv->device_tensor->setData(ToShaderBuffer<ShaderFloat>(priv->host_buffer));
+  }
   auto seq = priv->manager->sequence();
   seq->record<kp::OpSyncDevice>(
     {std::static_pointer_cast<kp::Memory>(priv->device_tensor)});
@@ -137,7 +189,8 @@ static void CopyDeviceToHost(N_Vector v)
   seq->record<kp::OpSyncLocal>(
     {std::static_pointer_cast<kp::Memory>(priv->device_tensor)});
   seq->eval();
-  priv->host_buffer  = priv->device_tensor->vector<sunrealtype>();
+  auto shader_data = priv->device_tensor->vector<ShaderFloat>();
+  FromShaderBuffer<ShaderFloat>(shader_data, priv->host_buffer);
   priv->host_dirty   = false;
   priv->device_dirty = false;
   RefreshHostMemoryView(v);
@@ -199,7 +252,7 @@ static const std::string& ElementwiseShaderSource()
   std::call_once(once,
                  []()
                  {
-                   const char* real = (sizeof(sunrealtype) == sizeof(double))
+                   const char* real = (sizeof(ShaderFloat) == sizeof(double))
                                         ? "double"
                                         : "float";
 
@@ -343,7 +396,8 @@ static void DispatchElementwise(ElementwiseOp op, sunrealtype a, sunrealtype b,
     {std::static_pointer_cast<kp::Memory>(privZ->device_tensor)});
   seq->eval();
 
-  privZ->host_buffer  = privZ->device_tensor->vector<sunrealtype>();
+  auto shader_data = privZ->device_tensor->vector<ShaderFloat>();
+  FromShaderBuffer<ShaderFloat>(shader_data, privZ->host_buffer);
   privZ->host_dirty   = false;
   privZ->device_dirty = false;
   RefreshHostMemoryView(z);
@@ -368,7 +422,7 @@ N_Vector N_VNewEmpty_Vulkan(SUNContext sunctx)
     return NULL;
   }
 
-  auto* priv = new (std::nothrow) _N_PrivateVectorContent_Vulkan();
+  auto* priv = new (std::nothrow) PrivateVectorContent_Vulkan();
   if (priv == nullptr)
   {
     N_VDestroy(v);
@@ -483,12 +537,24 @@ N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdata,
   NVEC_VULKAN_PRIVATE(v)->host_buffer.assign(h_vdata, h_vdata + length);
   if (d_vdata != NULL)
   {
-    NVEC_VULKAN_PRIVATE(v)->device_tensor =
-      NVEC_VULKAN_PRIVATE(v)->manager->tensor(d_vdata,
-                                              static_cast<uint32_t>(length),
-                                              sizeof(sunrealtype),
-                                              kp::Memory::dataType<sunrealtype>(),
-                                              kp::Memory::MemoryTypes::eDevice);
+    auto priv = NVEC_VULKAN_PRIVATE(v);
+    if constexpr (kShaderMatchesSunreal)
+    {
+      priv->device_tensor =
+        priv->manager->tensor(d_vdata, static_cast<uint32_t>(length),
+                              sizeof(ShaderFloat),
+                              kp::Memory::dataType<ShaderFloat>(),
+                              kp::Memory::MemoryTypes::eDevice);
+    }
+    else
+    {
+      auto shader_init = ToShaderBuffer<ShaderFloat>(priv->host_buffer);
+      priv->device_tensor =
+        priv->manager->tensor(shader_init.empty() ? nullptr : shader_init.data(),
+                              static_cast<uint32_t>(length), sizeof(ShaderFloat),
+                              kp::Memory::dataType<ShaderFloat>(),
+                              kp::Memory::MemoryTypes::eDevice);
+    }
     NVEC_VULKAN_PRIVATE(v)->device_dirty = false;
   }
   NVEC_VULKAN_PRIVATE(v)->host_dirty = false;
@@ -509,14 +575,29 @@ void N_VSetHostArrayPointer_Vulkan(sunrealtype* h_vdata, N_Vector v)
 void N_VSetDeviceArrayPointer_Vulkan(sunrealtype* d_vdata, N_Vector v)
 {
   auto priv = NVEC_VULKAN_PRIVATE(v);
-  priv->device_tensor =
-    priv->manager->tensor(d_vdata, static_cast<uint32_t>(NVEC_VULKAN_LENGTH(v)),
-                          sizeof(sunrealtype),
-                          kp::Memory::dataType<sunrealtype>(),
-                          kp::Memory::MemoryTypes::eDevice);
-  priv->device_dirty = false;
-  priv->host_dirty   = true;
-  RefreshDeviceMemoryView(v);
+  if constexpr (kShaderMatchesSunreal)
+  {
+    priv->device_tensor =
+      priv->manager->tensor(d_vdata, static_cast<uint32_t>(NVEC_VULKAN_LENGTH(v)),
+                            sizeof(ShaderFloat),
+                            kp::Memory::dataType<ShaderFloat>(),
+                            kp::Memory::MemoryTypes::eDevice);
+    priv->device_dirty = false;
+    priv->host_dirty   = true;
+    RefreshDeviceMemoryView(v);
+  }
+  else
+  {
+    if (d_vdata != nullptr)
+    {
+      priv->host_buffer.assign(d_vdata, d_vdata + NVEC_VULKAN_LENGTH(v));
+      RefreshHostMemoryView(v);
+    }
+    priv->device_tensor.reset();
+    priv->host_dirty   = true;
+    priv->device_dirty = false;
+    RefreshDeviceMemoryView(v);
+  }
 }
 
 SUNErrCode N_VSetKernelExecPolicy_Vulkan(N_Vector x,
