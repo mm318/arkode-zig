@@ -49,25 +49,63 @@ using namespace sundials::vulkan;
 
 struct PrivateVectorContent_Vulkan
 {
-  std::shared_ptr<kp::Manager> manager;
-  std::shared_ptr<kp::Tensor> device_tensor;
-  std::vector<sunrealtype> host_buffer;
-  bool host_dirty{true};
-  bool device_dirty{false};
+  std::shared_ptr<kp::Manager> manager;      // shared Kompute manager for queues/tensors
+  std::shared_ptr<kp::Tensor> device_tensor; // device buffer that backs the vector
+  std::vector<sunrealtype> host_buffer;      // owned host storage when not using external memory
+  sunrealtype* host_ptr{nullptr};            // active host pointer (external or host_buffer.data)
+  bool host_ptr_external{false};             // true when host_ptr is user-owned memory
+  bool host_dirty{true};                     // host is newer and must be copied to device
+  bool device_dirty{false};                  // device is newer and must be copied to host
 };
 
 #define NVEC_VULKAN_PRIVATE(x) \
   (static_cast<PrivateVectorContent_Vulkan*>(NVEC_VULKAN_CONTENT(x)->priv))
 
+static inline sunrealtype* HostPointer(N_Vector v)
+{
+  auto priv = NVEC_VULKAN_PRIVATE(v);
+  if (priv->host_ptr_external && priv->host_ptr != nullptr)
+  {
+    return priv->host_ptr;
+  }
+  priv->host_ptr          = priv->host_buffer.data();
+  priv->host_ptr_external = false;
+  return priv->host_ptr;
+}
+
+static void SyncHostBufferFromPointer(N_Vector v)
+{
+  auto priv = NVEC_VULKAN_PRIVATE(v);
+  if (priv->host_ptr_external && priv->host_ptr != nullptr &&
+      priv->host_ptr != priv->host_buffer.data())
+  {
+    priv->host_buffer.assign(priv->host_ptr,
+                             priv->host_ptr + NVEC_VULKAN_LENGTH(v));
+    priv->host_dirty = true;
+  }
+}
+
+static void SyncPointerFromHostBuffer(N_Vector v)
+{
+  auto priv = NVEC_VULKAN_PRIVATE(v);
+  if (priv->host_ptr_external && priv->host_ptr != nullptr &&
+      priv->host_ptr != priv->host_buffer.data())
+  {
+    std::copy(priv->host_buffer.begin(), priv->host_buffer.end(),
+              priv->host_ptr);
+  }
+}
+
 static void RefreshHostMemoryView(N_Vector v)
 {
+  SyncPointerFromHostBuffer(v);
   SUNMemory mem = NVEC_VULKAN_CONTENT(v)->host_data;
   if (mem == NULL)
   {
     mem                               = SUNMemoryNewEmpty(v->sunctx);
     NVEC_VULKAN_CONTENT(v)->host_data = mem;
   }
-  mem->ptr   = NVEC_VULKAN_PRIVATE(v)->host_buffer.data();
+  mem->ptr   = HostPointer(v);
   mem->bytes = NVEC_VULKAN_LENGTH(v) * sizeof(sunrealtype);
   mem->own   = SUNFALSE;
   mem->type  = SUNMEMTYPE_HOST;
@@ -160,6 +198,7 @@ static void EnsureTensor(N_Vector v)
 
 static void CopyHostToDevice(N_Vector v)
 {
+  SyncHostBufferFromPointer(v);
   auto priv = NVEC_VULKAN_PRIVATE(v);
   if (!priv->host_dirty) { return; }
   EnsureTensor(v);
@@ -439,6 +478,7 @@ N_Vector N_VNewEmpty_Vulkan(SUNContext sunctx)
   NVEC_VULKAN_CONTENT(v)->reduce_exec_policy = new AtomicReduceExecPolicy(256);
 
   priv->manager = SUNDIALS_VK_GetSharedManager();
+  priv->host_ptr = priv->host_buffer.data();
 
   // Attach operations
   v->ops->nvgetvectorid           = N_VGetVectorID_Vulkan;
@@ -507,6 +547,8 @@ N_Vector N_VNew_Vulkan(sunindextype length, SUNContext sunctx)
 
   NVEC_VULKAN_CONTENT(v)->length = length;
   NVEC_VULKAN_PRIVATE(v)->host_buffer.resize(length, ZERO);
+  NVEC_VULKAN_PRIVATE(v)->host_ptr = NVEC_VULKAN_PRIVATE(v)->host_buffer.data();
+  NVEC_VULKAN_PRIVATE(v)->host_ptr_external = false;
   NVEC_VULKAN_CONTENT(v)->mem_helper = SUNMemoryHelper_Vulkan(sunctx);
   NVEC_VULKAN_CONTENT(v)->own_helper = SUNTRUE;
   RefreshHostMemoryView(v);
@@ -534,7 +576,16 @@ N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdata,
   if (v == NULL) { return NULL; }
 
   // Wrap user-provided buffers
-  NVEC_VULKAN_PRIVATE(v)->host_buffer.assign(h_vdata, h_vdata + length);
+  if (h_vdata != nullptr)
+  {
+    NVEC_VULKAN_PRIVATE(v)->host_buffer.assign(h_vdata, h_vdata + length);
+  }
+  else
+  {
+    NVEC_VULKAN_PRIVATE(v)->host_buffer.assign(length, ZERO);
+  }
+  NVEC_VULKAN_PRIVATE(v)->host_ptr          = h_vdata;
+  NVEC_VULKAN_PRIVATE(v)->host_ptr_external = (h_vdata != nullptr);
   if (d_vdata != NULL)
   {
     auto priv = NVEC_VULKAN_PRIVATE(v);
@@ -566,9 +617,19 @@ N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdata,
 void N_VSetHostArrayPointer_Vulkan(sunrealtype* h_vdata, N_Vector v)
 {
   auto priv = NVEC_VULKAN_PRIVATE(v);
-  priv->host_buffer.assign(h_vdata, h_vdata + NVEC_VULKAN_LENGTH(v));
-  priv->host_dirty   = true;
-  priv->device_dirty = false;
+  const bool using_internal = (h_vdata == priv->host_buffer.data());
+  if (h_vdata != nullptr && !using_internal)
+  {
+    priv->host_buffer.assign(h_vdata, h_vdata + NVEC_VULKAN_LENGTH(v));
+  }
+  else if (h_vdata == nullptr)
+  {
+    priv->host_buffer.assign(NVEC_VULKAN_LENGTH(v), ZERO);
+  }
+  priv->host_ptr          = using_internal ? priv->host_buffer.data() : h_vdata;
+  priv->host_ptr_external = (h_vdata != nullptr && !using_internal);
+  priv->host_dirty        = true;
+  priv->device_dirty      = false;
   RefreshHostMemoryView(v);
 }
 
@@ -628,6 +689,9 @@ N_Vector N_VCloneEmpty_Vulkan(N_Vector w)
 
   NVEC_VULKAN_CONTENT(v)->length  = NVEC_VULKAN_CONTENT(w)->length;
   NVEC_VULKAN_PRIVATE(v)->manager = NVEC_VULKAN_PRIVATE(w)->manager;
+  NVEC_VULKAN_PRIVATE(v)->host_ptr =
+    NVEC_VULKAN_PRIVATE(v)->host_buffer.data();
+  NVEC_VULKAN_PRIVATE(v)->host_ptr_external = false;
   RefreshHostMemoryView(v);
   RefreshDeviceMemoryView(v);
   return v;
@@ -639,6 +703,8 @@ N_Vector N_VClone_Vulkan(N_Vector w)
   if (v == NULL) { return NULL; }
 
   NVEC_VULKAN_PRIVATE(v)->host_buffer  = NVEC_VULKAN_PRIVATE(w)->host_buffer;
+  NVEC_VULKAN_PRIVATE(v)->host_ptr     = NVEC_VULKAN_PRIVATE(v)->host_buffer.data();
+  NVEC_VULKAN_PRIVATE(v)->host_ptr_external = false;
   NVEC_VULKAN_PRIVATE(v)->host_dirty   = true;
   NVEC_VULKAN_PRIVATE(v)->device_dirty = false;
   RefreshHostMemoryView(v);
