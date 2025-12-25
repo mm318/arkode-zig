@@ -92,7 +92,10 @@ template<typename T>
 static void FromShaderBuffer(std::span<T> src, std::span<sunrealtype> dst)
 {
   assert(dst.size() >= src.size());
-  if constexpr (std::is_same_v<T, sunrealtype>) { dst = src; }
+  if constexpr (std::is_same_v<T, sunrealtype>)
+  {
+    std::copy(src.begin(), src.end(), dst.begin());
+  }
   else
   {
     std::transform(src.begin(), src.end(), dst.begin(),
