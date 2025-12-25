@@ -112,13 +112,13 @@ static void EnsureHostDataLength(N_Vector v, sunindextype new_length)
     if (vec->size() >= static_cast<size_t>(new_length))
     {
       // Sufficient storage - just update length
-      NVEC_VULKAN_CONTENT(v)->length = new_length;
+      NVEC_VULKAN_LENGTH(v) = new_length;
     }
     else
     {
       // Need to resize the vector
       vec->resize(new_length);
-      NVEC_VULKAN_CONTENT(v)->length = new_length;
+      NVEC_VULKAN_LENGTH(v) = new_length;
     }
   }
   else if (auto* ptr = std::get_if<sunrealtype*>(&priv->host_data))
@@ -129,7 +129,7 @@ static void EnsureHostDataLength(N_Vector v, sunindextype new_length)
     if (new_length <= old_length)
     {
       // Assume pointer has at least old_length capacity
-      NVEC_VULKAN_CONTENT(v)->length = new_length;
+      NVEC_VULKAN_LENGTH(v) = new_length;
     }
     else
     {
@@ -140,7 +140,7 @@ static void EnsureHostDataLength(N_Vector v, sunindextype new_length)
         std::copy(*ptr, *ptr + old_length, new_vec.begin());
       }
       priv->host_data                = std::move(new_vec);
-      NVEC_VULKAN_CONTENT(v)->length = new_length;
+      NVEC_VULKAN_LENGTH(v) = new_length;
     }
   }
 }
@@ -455,7 +455,7 @@ N_Vector N_VNewEmpty_Vulkan(SUNContext sunctx)
   }
   NVEC_VULKAN_CONTENT(v)->priv = priv;
 
-  NVEC_VULKAN_CONTENT(v)->length             = 0;
+  NVEC_VULKAN_LENGTH(v)             = 0;
   NVEC_VULKAN_CONTENT(v)->stream_exec_policy = new ExecPolicy(256);
   NVEC_VULKAN_CONTENT(v)->reduce_exec_policy = new AtomicReduceExecPolicy(256);
 
@@ -526,7 +526,7 @@ N_Vector N_VNew_Vulkan(sunindextype length, SUNContext sunctx)
   N_Vector v = N_VNewEmpty_Vulkan(sunctx);
   if (v == NULL) { return NULL; }
 
-  NVEC_VULKAN_CONTENT(v)->length = length;
+  NVEC_VULKAN_LENGTH(v) = length;
   NVEC_VULKAN_PRIVATE(v)->host_data =
     std::vector(length, static_cast<sunrealtype>(ZERO));
 
@@ -539,7 +539,7 @@ N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdata,
   N_Vector v = N_VNewEmpty_Vulkan(sunctx);
   if (v == NULL) { return NULL; }
 
-  NVEC_VULKAN_CONTENT(v)->length = length;
+  NVEC_VULKAN_LENGTH(v) = length;
 
   // Set up host buffer
   if (h_vdata != nullptr)
@@ -639,7 +639,7 @@ SUNErrCode N_VSetKernelExecPolicy_Vulkan(N_Vector x,
 
 N_Vector N_VCloneEmpty_Vulkan(N_Vector w)
 {
-  N_Vector v = N_VNew_Vulkan(NVEC_VULKAN_CONTENT(w)->length, w->sunctx);
+  N_Vector v = N_VNew_Vulkan(NVEC_VULKAN_LENGTH(w), w->sunctx);
   if (v == NULL) { return NULL; }
 
   NVEC_VULKAN_PRIVATE(v)->manager = NVEC_VULKAN_PRIVATE(w)->manager;
