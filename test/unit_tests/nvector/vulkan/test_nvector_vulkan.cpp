@@ -74,18 +74,6 @@ int main(int argc, char* argv[])
   /* attach length to empty vector so set/get array pointer tests have size */
   N_VectorContent_Vulkan wcontent = (N_VectorContent_Vulkan)W->content;
   wcontent->length                = length;
-  if (wcontent->mem_helper == NULL)
-  {
-    wcontent->mem_helper = SUNMemoryHelper_Vulkan(sunctx);
-    wcontent->own_helper = SUNTRUE;
-    if (wcontent->mem_helper == NULL)
-    {
-      N_VDestroy(W);
-      printf("FAIL: Unable to create Vulkan memory helper \n\n");
-      Test_Finalize();
-      return (1);
-    }
-  }
 
   X = N_VNew_Vulkan(length, sunctx);
   if (X == NULL)

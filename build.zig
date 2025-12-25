@@ -14,7 +14,7 @@ const c_flags: RunArgs = &.{
 };
 
 const cpp_flags: RunArgs = &.{
-    "-std=c++17",
+    "-std=c++20",
 };
 
 fn is_c(path: []const u8) bool {

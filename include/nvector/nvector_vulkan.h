@@ -19,12 +19,8 @@ extern "C" {
 struct _N_VectorContent_Vulkan
 {
   sunindextype length;
-  sunbooleantype own_helper;
-  SUNMemory host_data;
-  SUNMemory device_data;
   SUNVulkanExecPolicy* stream_exec_policy;
   SUNVulkanExecPolicy* reduce_exec_policy;
-  SUNMemoryHelper mem_helper;
   void* priv; /* 'private' data */
 };
 
@@ -40,8 +36,6 @@ SUNDIALS_EXPORT N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdat
 
 SUNDIALS_EXPORT void N_VSetHostArrayPointer_Vulkan(sunrealtype* h_vdata,
                                                    N_Vector v);
-SUNDIALS_EXPORT void N_VSetDeviceArrayPointer_Vulkan(sunrealtype* d_vdata,
-                                                     N_Vector v);
 
 SUNDIALS_EXPORT SUNErrCode N_VSetKernelExecPolicy_Vulkan(
   N_Vector x, SUNVulkanExecPolicy* stream_exec_policy,
@@ -56,24 +50,13 @@ static inline sunindextype N_VGetLength_Vulkan(N_Vector x)
   return content->length;
 }
 
-static inline sunrealtype* N_VGetHostArrayPointer_Vulkan(N_Vector x)
-{
-  N_VectorContent_Vulkan content = (N_VectorContent_Vulkan)x->content;
-  return (content->host_data == NULL ? NULL
-                                     : (sunrealtype*)content->host_data->ptr);
-}
-
-static inline sunrealtype* N_VGetDeviceArrayPointer_Vulkan(N_Vector x)
-{
-  N_VectorContent_Vulkan content = (N_VectorContent_Vulkan)x->content;
-  return (content->device_data == NULL ? NULL
-                                       : (sunrealtype*)content->device_data->ptr);
-}
-
 static inline N_Vector_ID N_VGetVectorID_Vulkan(N_Vector /*v*/)
 {
   return SUNDIALS_NVEC_CUSTOM;
 }
+
+sunrealtype* N_VGetHostArrayPointer_Vulkan(N_Vector x);
+sunrealtype* N_VGetDeviceArrayPointer_Vulkan(N_Vector x);
 
 SUNDIALS_EXPORT N_Vector N_VCloneEmpty_Vulkan(N_Vector w);
 SUNDIALS_EXPORT N_Vector N_VClone_Vulkan(N_Vector w);
