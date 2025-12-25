@@ -63,10 +63,41 @@ struct PrivateVectorContent_Vulkan
 #define NVEC_VULKAN_PRIVATE(x) \
   (static_cast<PrivateVectorContent_Vulkan*>(NVEC_VULKAN_CONTENT(x)->priv))
 
+using ShaderFloat = float;
+
+static constexpr bool kShaderMatchesSunreal =
+  std::is_same_v<ShaderFloat, sunrealtype>;
+
 static inline std::span<sunrealtype> HostData(N_Vector v)
 {
   return {N_VGetHostArrayPointer_Vulkan(v),
           static_cast<size_t>(NVEC_VULKAN_LENGTH(v))};
+}
+
+// Shader runs in single precision; convert at the boundaries when sunrealtype differs.
+template<typename T>
+static std::vector<T> ToShaderBuffer(std::span<sunrealtype> src)
+{
+  if constexpr (std::is_same_v<T, sunrealtype>) { return src; }
+  else
+  {
+    std::vector<T> dst(src.size());
+    std::transform(src.begin(), src.end(), dst.begin(),
+                   [](sunrealtype v) { return static_cast<T>(v); });
+    return dst;
+  }
+}
+
+template<typename T>
+static void FromShaderBuffer(std::span<T> src, std::span<sunrealtype> dst)
+{
+  assert(dst.size() >= src.size());
+  if constexpr (std::is_same_v<T, sunrealtype>) { dst = src; }
+  else
+  {
+    std::transform(src.begin(), src.end(), dst.begin(),
+                   [](T v) { return static_cast<sunrealtype>(v); });
+  }
 }
 
 // Ensure host_data has at least new_length capacity.
@@ -114,49 +145,6 @@ static void EnsureHostDataLength(N_Vector v, sunindextype new_length)
   }
 }
 
-static void MarkDeviceNeedsUpdate(N_Vector v)
-{
-  NVEC_VULKAN_PRIVATE(v)->device_needs_update = true;
-  NVEC_VULKAN_PRIVATE(v)->host_needs_update   = false;
-}
-
-static void MarkHostNeedsUpdate(N_Vector v)
-{
-  NVEC_VULKAN_PRIVATE(v)->host_needs_update   = true;
-  NVEC_VULKAN_PRIVATE(v)->device_needs_update = false;
-}
-
-// Shader runs in single precision; convert at the boundaries when sunrealtype differs.
-template<typename T>
-static std::vector<T> ToShaderBuffer(std::span<sunrealtype> src)
-{
-  if constexpr (std::is_same_v<T, sunrealtype>) { return src; }
-  else
-  {
-    std::vector<T> dst(src.size());
-    std::transform(src.begin(), src.end(), dst.begin(),
-                   [](sunrealtype v) { return static_cast<T>(v); });
-    return dst;
-  }
-}
-
-template<typename T>
-static void FromShaderBuffer(std::span<T> src, std::span<sunrealtype> dst)
-{
-  assert(dst.size() >= src.size());
-  if constexpr (std::is_same_v<T, sunrealtype>) { dst = src; }
-  else
-  {
-    std::transform(src.begin(), src.end(), dst.begin(),
-                   [](T v) { return static_cast<sunrealtype>(v); });
-  }
-}
-
-using ShaderFloat = float;
-
-static constexpr bool kShaderMatchesSunreal =
-  std::is_same_v<ShaderFloat, sunrealtype>;
-
 static void EnsureTensor(N_Vector v)
 {
   auto* priv = NVEC_VULKAN_PRIVATE(v);
@@ -185,7 +173,19 @@ static void EnsureTensor(N_Vector v)
   }
 }
 
-static void CopyHostToDevice(N_Vector v)
+static void MarkDeviceNeedsUpdate(N_Vector v)
+{
+  NVEC_VULKAN_PRIVATE(v)->device_needs_update = true;
+  NVEC_VULKAN_PRIVATE(v)->host_needs_update   = false;
+}
+
+static void MarkHostNeedsUpdate(N_Vector v)
+{
+  NVEC_VULKAN_PRIVATE(v)->host_needs_update   = true;
+  NVEC_VULKAN_PRIVATE(v)->device_needs_update = false;
+}
+
+void N_VCopyToDevice_Vulkan(N_Vector v)
 {
   auto* priv = NVEC_VULKAN_PRIVATE(v);
   if (!priv->device_needs_update) { return; }
@@ -208,7 +208,7 @@ static void CopyHostToDevice(N_Vector v)
   priv->host_needs_update   = false;
 }
 
-static void CopyDeviceToHost(N_Vector v)
+void N_VCopyFromDevice_Vulkan(N_Vector v)
 {
   auto* priv = NVEC_VULKAN_PRIVATE(v);
   if (!priv->host_needs_update) { return; }
@@ -382,8 +382,8 @@ static void DispatchElementwise(ElementwiseOp op, sunrealtype a, sunrealtype b,
   auto privY = y ? NVEC_VULKAN_PRIVATE(y) : nullptr;
   auto privZ = NVEC_VULKAN_PRIVATE(z);
 
-  CopyHostToDevice(x);
-  if (y) { CopyHostToDevice(y); }
+  N_VCopyToDevice_Vulkan(x);
+  if (y) { N_VCopyToDevice_Vulkan(y); }
   EnsureTensor(z);
 
   auto spirv = GetElementwiseSpirv();
@@ -533,14 +533,6 @@ N_Vector N_VNew_Vulkan(sunindextype length, SUNContext sunctx)
   return v;
 }
 
-N_Vector N_VNewWithMemHelp_Vulkan(sunindextype length, SUNMemoryHelper helper,
-                                  SUNContext sunctx)
-{
-  N_Vector v = N_VNew_Vulkan(length, sunctx);
-  if (v == NULL) { return NULL; }
-  return v;
-}
-
 N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdata,
                         sunrealtype* d_vdata, SUNContext sunctx)
 {
@@ -643,10 +635,6 @@ SUNErrCode N_VSetKernelExecPolicy_Vulkan(N_Vector x,
   return SUN_SUCCESS;
 }
 
-void N_VCopyToDevice_Vulkan(N_Vector v) { CopyHostToDevice(v); }
-
-void N_VCopyFromDevice_Vulkan(N_Vector v) { CopyDeviceToHost(v); }
-
 N_Vector N_VCloneEmpty_Vulkan(N_Vector w)
 {
   N_Vector v = N_VNew_Vulkan(NVEC_VULKAN_CONTENT(w)->length, w->sunctx);
@@ -736,8 +724,8 @@ void N_VAddConst_Vulkan(N_Vector x, sunrealtype b, N_Vector z)
 
 sunrealtype N_VDotProd_Vulkan(N_Vector x, N_Vector y)
 {
-  CopyDeviceToHost(x);
-  CopyDeviceToHost(y);
+  N_VCopyFromDevice_Vulkan(x);
+  N_VCopyFromDevice_Vulkan(y);
   const auto hx = HostData(x);
   const auto hy = HostData(y);
   return std::inner_product(hx.begin(), hx.end(), hy.begin(), ZERO);
@@ -745,7 +733,7 @@ sunrealtype N_VDotProd_Vulkan(N_Vector x, N_Vector y)
 
 sunrealtype N_VMaxNorm_Vulkan(N_Vector x)
 {
-  CopyDeviceToHost(x);
+  N_VCopyFromDevice_Vulkan(x);
   const auto hx = HostData(x);
   sunrealtype m = ZERO;
   for (auto v : hx) m = std::max(m, std::abs(v));
@@ -754,8 +742,8 @@ sunrealtype N_VMaxNorm_Vulkan(N_Vector x)
 
 sunrealtype N_VWrmsNorm_Vulkan(N_Vector x, N_Vector w)
 {
-  CopyDeviceToHost(x);
-  CopyDeviceToHost(w);
+  N_VCopyFromDevice_Vulkan(x);
+  N_VCopyFromDevice_Vulkan(w);
   const auto hx   = HostData(x);
   const auto hw   = HostData(w);
   sunrealtype sum = ZERO;
@@ -769,9 +757,9 @@ sunrealtype N_VWrmsNorm_Vulkan(N_Vector x, N_Vector w)
 
 sunrealtype N_VWrmsNormMask_Vulkan(N_Vector x, N_Vector w, N_Vector id)
 {
-  CopyDeviceToHost(x);
-  CopyDeviceToHost(w);
-  CopyDeviceToHost(id);
+  N_VCopyFromDevice_Vulkan(x);
+  N_VCopyFromDevice_Vulkan(w);
+  N_VCopyFromDevice_Vulkan(id);
   const auto hx    = HostData(x);
   const auto hw    = HostData(w);
   const auto hid   = HostData(id);
@@ -791,15 +779,15 @@ sunrealtype N_VWrmsNormMask_Vulkan(N_Vector x, N_Vector w, N_Vector id)
 
 sunrealtype N_VMin_Vulkan(N_Vector x)
 {
-  CopyDeviceToHost(x);
+  N_VCopyFromDevice_Vulkan(x);
   const auto hx = HostData(x);
   return *std::min_element(hx.begin(), hx.end());
 }
 
 sunrealtype N_VWL2Norm_Vulkan(N_Vector x, N_Vector w)
 {
-  CopyDeviceToHost(x);
-  CopyDeviceToHost(w);
+  N_VCopyFromDevice_Vulkan(x);
+  N_VCopyFromDevice_Vulkan(w);
   const auto hx   = HostData(x);
   const auto hw   = HostData(w);
   sunrealtype sum = ZERO;
@@ -809,7 +797,7 @@ sunrealtype N_VWL2Norm_Vulkan(N_Vector x, N_Vector w)
 
 sunrealtype N_VL1Norm_Vulkan(N_Vector x)
 {
-  CopyDeviceToHost(x);
+  N_VCopyFromDevice_Vulkan(x);
   const auto hx   = HostData(x);
   sunrealtype sum = ZERO;
   for (auto v : hx) sum += std::abs(v);
@@ -823,7 +811,7 @@ void N_VCompare_Vulkan(sunrealtype c, N_Vector x, N_Vector z)
 
 sunbooleantype N_VInvTest_Vulkan(N_Vector x, N_Vector z)
 {
-  CopyDeviceToHost(x);
+  N_VCopyFromDevice_Vulkan(x);
   EnsureHostDataLength(z, NVEC_VULKAN_LENGTH(x));
   const auto hx         = HostData(x);
   auto hz               = HostData(z);
@@ -844,8 +832,8 @@ sunbooleantype N_VInvTest_Vulkan(N_Vector x, N_Vector z)
 
 sunbooleantype N_VConstrMask_Vulkan(N_Vector c, N_Vector x, N_Vector m)
 {
-  CopyDeviceToHost(c);
-  CopyDeviceToHost(x);
+  N_VCopyFromDevice_Vulkan(c);
+  N_VCopyFromDevice_Vulkan(x);
   EnsureHostDataLength(m, NVEC_VULKAN_LENGTH(x));
   auto hm       = HostData(m);
   const auto hc = HostData(c);
@@ -871,8 +859,8 @@ sunbooleantype N_VConstrMask_Vulkan(N_Vector c, N_Vector x, N_Vector m)
 
 sunrealtype N_VMinQuotient_Vulkan(N_Vector num, N_Vector denom)
 {
-  CopyDeviceToHost(num);
-  CopyDeviceToHost(denom);
+  N_VCopyFromDevice_Vulkan(num);
+  N_VCopyFromDevice_Vulkan(denom);
   const auto hn   = HostData(num);
   const auto hd   = HostData(denom);
   sunrealtype min = std::numeric_limits<sunrealtype>::infinity();
@@ -897,7 +885,7 @@ SUNErrCode N_VLinearCombination_Vulkan(int nvec, sunrealtype* c, N_Vector* X,
   std::fill(hz.begin(), hz.end(), ZERO);
   for (int j = 0; j < nvec; j++)
   {
-    CopyDeviceToHost(X[j]);
+    N_VCopyFromDevice_Vulkan(X[j]);
     const auto hx = HostData(X[j]);
     for (size_t i = 0; i < hz.size(); ++i) hz[i] += c[j] * hx[i];
   }
@@ -910,11 +898,11 @@ SUNErrCode N_VScaleAddMulti_Vulkan(int nvec, sunrealtype* c, N_Vector X,
                                    N_Vector* Y, N_Vector* Z)
 {
   if (nvec <= 0) { return SUN_ERR_ARG_OUTOFRANGE; }
-  CopyDeviceToHost(X);
+  N_VCopyFromDevice_Vulkan(X);
   const auto hx = HostData(X);
   for (int j = 0; j < nvec; j++)
   {
-    CopyDeviceToHost(Y[j]);
+    N_VCopyFromDevice_Vulkan(Y[j]);
     EnsureHostDataLength(Z[j], static_cast<sunindextype>(hx.size()));
     auto hz       = HostData(Z[j]);
     const auto hy = HostData(Y[j]);
@@ -927,11 +915,11 @@ SUNErrCode N_VScaleAddMulti_Vulkan(int nvec, sunrealtype* c, N_Vector X,
 SUNErrCode N_VDotProdMulti_Vulkan(int nvec, N_Vector x, N_Vector* Y,
                                   sunrealtype* dotprods)
 {
-  CopyDeviceToHost(x);
+  N_VCopyFromDevice_Vulkan(x);
   const auto hx = HostData(x);
   for (int j = 0; j < nvec; j++)
   {
-    CopyDeviceToHost(Y[j]);
+    N_VCopyFromDevice_Vulkan(Y[j]);
     const auto hy = HostData(Y[j]);
     dotprods[j]   = std::inner_product(hx.begin(), hx.end(), hy.begin(), ZERO);
   }
@@ -1010,8 +998,8 @@ SUNErrCode N_VWrmsNormMaskVectorArray_Vulkan(int nvec, N_Vector* X, N_Vector* W,
 
 sunrealtype N_VWSqrSumLocal_Vulkan(N_Vector x, N_Vector w)
 {
-  CopyDeviceToHost(x);
-  CopyDeviceToHost(w);
+  N_VCopyFromDevice_Vulkan(x);
+  N_VCopyFromDevice_Vulkan(w);
   const auto hx   = HostData(x);
   const auto hw   = HostData(w);
   sunrealtype sum = ZERO;
@@ -1021,9 +1009,9 @@ sunrealtype N_VWSqrSumLocal_Vulkan(N_Vector x, N_Vector w)
 
 sunrealtype N_VWSqrSumMaskLocal_Vulkan(N_Vector x, N_Vector w, N_Vector id)
 {
-  CopyDeviceToHost(x);
-  CopyDeviceToHost(w);
-  CopyDeviceToHost(id);
+  N_VCopyFromDevice_Vulkan(x);
+  N_VCopyFromDevice_Vulkan(w);
+  N_VCopyFromDevice_Vulkan(id);
   const auto hx   = HostData(x);
   const auto hw   = HostData(w);
   const auto hid  = HostData(id);
@@ -1047,7 +1035,7 @@ SUNErrCode N_VBufSize_Vulkan(N_Vector x, sunindextype* size)
 
 SUNErrCode N_VBufPack_Vulkan(N_Vector x, void* buf)
 {
-  CopyDeviceToHost(x);
+  N_VCopyFromDevice_Vulkan(x);
   const auto hx = HostData(x);
   std::memcpy(buf, hx.data(), hx.size() * sizeof(sunrealtype));
   return SUN_SUCCESS;
@@ -1071,7 +1059,7 @@ void N_VPrint_Vulkan(N_Vector v) { N_VPrintFile_Vulkan(v, stdout); }
 
 void N_VPrintFile_Vulkan(N_Vector v, FILE* outfile)
 {
-  CopyDeviceToHost(v);
+  N_VCopyFromDevice_Vulkan(v);
   const auto hv = HostData(v);
   for (auto val : hv) { fprintf(outfile, "%g ", val); }
   fprintf(outfile, "\n");

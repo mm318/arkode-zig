@@ -28,9 +28,6 @@ typedef struct _N_VectorContent_Vulkan* N_VectorContent_Vulkan;
 
 SUNDIALS_EXPORT N_Vector N_VNewEmpty_Vulkan(SUNContext sunctx);
 SUNDIALS_EXPORT N_Vector N_VNew_Vulkan(sunindextype length, SUNContext sunctx);
-SUNDIALS_EXPORT N_Vector N_VNewWithMemHelp_Vulkan(sunindextype length,
-                                                  SUNMemoryHelper helper,
-                                                  SUNContext sunctx);
 SUNDIALS_EXPORT N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdata,
                                         sunrealtype* d_vdata, SUNContext sunctx);
 
