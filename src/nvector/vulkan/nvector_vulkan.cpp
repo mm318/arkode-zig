@@ -359,7 +359,7 @@ static void DispatchElementwise(ElementwiseOp op, sunrealtype a, sunrealtype b,
   EnsureTensor(z);
 
   const auto& spirv = GetElementwiseSpirv();
-  auto seq   = privZ->manager->sequence();
+  auto seq          = privZ->manager->sequence();
 
   // Sync inputs and outputs
   std::vector<std::shared_ptr<kp::Memory>> memObjects;
@@ -563,7 +563,17 @@ void N_VSetHostArrayPointer_Vulkan(sunrealtype* h_vdata, N_Vector v)
     priv->host_data = std::vector(NVEC_VULKAN_LENGTH(v),
                                   static_cast<sunrealtype>(ZERO));
   }
-  else { priv->host_data = h_vdata; }
+  else
+  {
+    // Check if h_vdata points to our internal vector's data - if so, don't
+    // replace the variant (which would destroy the vector and make h_vdata
+    // a dangling pointer)
+    if (auto* vec = std::get_if<std::vector<sunrealtype>>(&priv->host_data))
+    {
+      if (vec->data() != h_vdata) { priv->host_data = h_vdata; }
+    }
+    else { priv->host_data = h_vdata; }
+  }
 
   MarkDeviceNeedsUpdate(v);
 }
