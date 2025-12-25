@@ -139,7 +139,7 @@ static void EnsureHostDataLength(N_Vector v, sunindextype new_length)
       {
         std::copy(*ptr, *ptr + old_length, new_vec.begin());
       }
-      priv->host_data                = std::move(new_vec);
+      priv->host_data       = std::move(new_vec);
       NVEC_VULKAN_LENGTH(v) = new_length;
     }
   }
@@ -228,62 +228,11 @@ void N_VCopyFromDevice_Vulkan(N_Vector v)
 // Slang compilation helpers
 // ---------------------------------------------------------------------------
 
-static std::vector<uint32_t> CompileSlangToSpirv(
-  const std::string& source, const std::string& entry,
-  const std::array<uint32_t, 3>& localSize)
+static const std::string ElementwiseShaderSource()
 {
-  std::filesystem::path tmpdir = std::filesystem::temp_directory_path();
-  std::filesystem::path src    = tmpdir / "nvector_vulkan_tmp.slang";
-  std::filesystem::path spv    = tmpdir / "nvector_vulkan_tmp.spv";
+  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
 
-  {
-    std::ofstream out(src);
-    out << source;
-  }
-
-  std::stringstream cmd;
-  cmd << "slangc -target spirv -profile cs_6_2 -entry " << entry << " "
-      << "-DLOCAL_SIZE_X=" << localSize[0] << " "
-      << "-DLOCAL_SIZE_Y=" << localSize[1] << " "
-      << "-DLOCAL_SIZE_Z=" << localSize[2] << " "
-      << "-o " << spv << " " << src;
-
-  int rc = std::system(cmd.str().c_str());
-  if (rc != 0)
-  {
-    throw std::runtime_error(
-      "slangc failed when compiling Vulkan NVECTOR shaders");
-  }
-
-  std::ifstream spv_in(spv, std::ios::binary);
-  std::vector<char> spirv_bytes((std::istreambuf_iterator<char>(spv_in)),
-                                std::istreambuf_iterator<char>());
-
-  // Cleanup temp files
-  std::filesystem::remove(src);
-  std::filesystem::remove(spv);
-
-  // convert byte stream to uint32_t vector
-  std::vector<uint32_t> words;
-  words.resize(spirv_bytes.size() / sizeof(uint32_t));
-  std::memcpy(words.data(), spirv_bytes.data(), spirv_bytes.size());
-  return words;
-}
-
-static const std::string& ElementwiseShaderSource()
-{
-  static std::once_flag once;
-
-  static std::string src;
-
-  std::call_once(once,
-                 []()
-                 {
-                   const char* real = (sizeof(ShaderFloat) == sizeof(double))
-                                        ? "double"
-                                        : "float";
-
-                   src = fmt::format(R"(
+  std::string src = fmt::format(R"(
 // Elementwise operations controlled via push constants.
 struct Params {{
     uint op;
@@ -326,36 +275,59 @@ void main(uint3 dtid : SV_DispatchThreadID)
     }}
 }}
                   )",
-                                     real, real, real, real, real, real, real,
-                                     real, real, real);
-                 });
+                                real, real, real, real, real, real, real, real,
+                                real, real);
 
   return src;
 }
 
-struct ShaderCache
+static std::vector<uint32_t> CompileSlangToSpirv(
+  const std::string& source, const std::string& entry,
+  const std::array<uint32_t, 3>& localSize)
 {
-  std::vector<uint32_t> elementwise_spv;
-  std::mutex mutex;
-};
+  std::filesystem::path tmpdir = std::filesystem::temp_directory_path();
+  std::filesystem::path src    = tmpdir / "nvector_vulkan_tmp.slang";
+  std::filesystem::path spv    = tmpdir / "nvector_vulkan_tmp.spv";
 
-static ShaderCache& GetShaderCache()
-{
-  static ShaderCache cache;
-  return cache;
+  {
+    std::ofstream out(src);
+    out << source;
+  }
+
+  std::stringstream cmd;
+  cmd << "slangc -target spirv -profile cs_6_2 -entry " << entry << " "
+      << "-DLOCAL_SIZE_X=" << localSize[0] << " "
+      << "-DLOCAL_SIZE_Y=" << localSize[1] << " "
+      << "-DLOCAL_SIZE_Z=" << localSize[2] << " "
+      << "-o " << spv << " " << src;
+
+  int rc = std::system(cmd.str().c_str());
+  if (rc != 0)
+  {
+    throw std::runtime_error(
+      "slangc failed when compiling Vulkan NVECTOR shaders");
+  }
+
+  std::ifstream spv_in(spv, std::ios::binary);
+  std::vector<char> spirv_bytes((std::istreambuf_iterator<char>(spv_in)),
+                                std::istreambuf_iterator<char>());
+
+  // Cleanup temp files
+  // std::filesystem::remove(src);
+  // std::filesystem::remove(spv);
+
+  // convert byte stream to uint32_t vector
+  std::vector<uint32_t> words;
+  words.resize(spirv_bytes.size() / sizeof(uint32_t));
+  std::memcpy(words.data(), spirv_bytes.data(), spirv_bytes.size());
+  return words;
 }
 
 static const std::vector<uint32_t>& GetElementwiseSpirv()
 {
-  auto& cache = GetShaderCache();
-  if (!cache.elementwise_spv.empty()) { return cache.elementwise_spv; }
-  std::lock_guard<std::mutex> lock(cache.mutex);
-  if (cache.elementwise_spv.empty())
-  {
-    cache.elementwise_spv = CompileSlangToSpirv(ElementwiseShaderSource(),
-                                                "main", {256, 1, 1});
-  }
-  return cache.elementwise_spv;
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(ElementwiseShaderSource(), "main", {256, 1, 1});
+  return spirv;
 }
 
 // ---------------------------------------------------------------------------
@@ -455,7 +427,7 @@ N_Vector N_VNewEmpty_Vulkan(SUNContext sunctx)
   }
   NVEC_VULKAN_CONTENT(v)->priv = priv;
 
-  NVEC_VULKAN_LENGTH(v)             = 0;
+  NVEC_VULKAN_LENGTH(v)                      = 0;
   NVEC_VULKAN_CONTENT(v)->stream_exec_policy = new ExecPolicy(256);
   NVEC_VULKAN_CONTENT(v)->reduce_exec_policy = new AtomicReduceExecPolicy(256);
 
