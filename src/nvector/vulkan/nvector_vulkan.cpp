@@ -536,10 +536,12 @@ N_Vector N_VNew_Vulkan(sunindextype length, SUNContext sunctx)
 N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdata,
                         sunrealtype* d_vdata, SUNContext sunctx)
 {
-  N_Vector v = N_VNew_Vulkan(length, sunctx);
+  N_Vector v = N_VNewEmpty_Vulkan(sunctx);
   if (v == NULL) { return NULL; }
 
-  // Wrap user-provided buffers
+  NVEC_VULKAN_CONTENT(v)->length = length;
+
+  // Set up host buffer
   if (h_vdata != nullptr)
   {
     NVEC_VULKAN_PRIVATE(v)->host_data = std::vector(h_vdata, h_vdata + length);
@@ -650,7 +652,21 @@ N_Vector N_VClone_Vulkan(N_Vector w)
   N_Vector v = N_VCloneEmpty_Vulkan(w);
   if (v == NULL) { return NULL; }
 
-  NVEC_VULKAN_PRIVATE(v)->host_data = NVEC_VULKAN_PRIVATE(w)->host_data;
+  // Deep copy: if source is a pointer, we must copy the data to v's vector
+  // (v was already created with a vector via N_VCloneEmpty_Vulkan)
+  auto* priv_w = NVEC_VULKAN_PRIVATE(w);
+  if (std::holds_alternative<std::vector<sunrealtype>>(priv_w->host_data))
+  {
+    // Source is a vector - variant assignment does deep copy
+    NVEC_VULKAN_PRIVATE(v)->host_data = priv_w->host_data;
+  }
+  else
+  {
+    // Source is a pointer - copy data into v's existing vector
+    const auto hw = HostData(w);
+    auto hv       = HostData(v);
+    std::copy(hw.begin(), hw.end(), hv.begin());
+  }
   MarkDeviceNeedsUpdate(v);
 
   return v;
