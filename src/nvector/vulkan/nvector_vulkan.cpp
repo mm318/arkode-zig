@@ -358,7 +358,7 @@ static void DispatchElementwise(ElementwiseOp op, sunrealtype a, sunrealtype b,
   if (y) { N_VCopyToDevice_Vulkan(y); }
   EnsureTensor(z);
 
-  auto spirv = GetElementwiseSpirv();
+  const auto& spirv = GetElementwiseSpirv();
   auto seq   = privZ->manager->sequence();
 
   // Sync inputs and outputs
@@ -395,8 +395,10 @@ static void DispatchElementwise(ElementwiseOp op, sunrealtype a, sunrealtype b,
     {std::static_pointer_cast<kp::Memory>(privZ->device_data)});
   seq->eval();
 
-  auto from_shader = privZ->device_data->vector<ShaderFloat>();
-  FromShaderBuffer<ShaderFloat>(from_shader, HostData(z));
+  // Copy results back to host - match the pattern in N_VCopyFromDevice_Vulkan
+  ShaderFloat* from_shader = privZ->device_data->data<ShaderFloat>();
+  FromShaderBuffer<ShaderFloat>({from_shader, privZ->device_data->size()},
+                                HostData(z));
   privZ->device_needs_update = false;
   privZ->host_needs_update   = false;
 }
