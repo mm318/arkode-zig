@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const zcc = @import("compile_commands.zig");
 
 const RunArgs = []const []const u8;
 
@@ -426,11 +427,11 @@ pub fn build(b: *std.Build) !void {
         }) catch @panic("OOM");
     }
 
-    var sundials_libs = std.ArrayList(*std.Build.Step.Compile).initCapacity(
+    var sundials_targets = std.ArrayList(*std.Build.Step.Compile).initCapacity(
         b.allocator,
-        sundials_components.items.len,
+        sundials_components.items.len + 1,
     ) catch @panic("OOM");
-    defer sundials_libs.deinit(b.allocator);
+    // defer sundials_targets.deinit(b.allocator); // this changes ownership later
 
     for (sundials_components.items) |sundials_lib| {
         const lib = sundials_add_library(
@@ -441,7 +442,7 @@ pub fn build(b: *std.Build) !void {
             sundials_lib.src_files,
             config_header,
         );
-        sundials_libs.append(b.allocator, lib) catch @panic("OOM");
+        sundials_targets.append(b.allocator, lib) catch @panic("OOM");
     }
 
     const arkode_lib = SundialsComponent{
@@ -490,16 +491,20 @@ pub fn build(b: *std.Build) !void {
         arkode_lib.src_files,
         config_header,
     );
-    for (sundials_libs.items) |sundials_lib| {
+    for (sundials_targets.items) |sundials_lib| {
         arkode.linkLibrary(sundials_lib);
     }
     arkode.installHeadersDirectory(b.path("include"), "", .{});
     arkode.installHeader(config_header.getOutput(), "sundials/sundials_config.h");
     b.installArtifact(arkode);
+    sundials_targets.append(b.allocator, arkode) catch @panic("OOM");
 
-    build_examples(b, target, optimize, features, config_header, arkode);
-    build_unit_tests(b, target, optimize, features, config_header, arkode);
-    build_benchmarks(b, target, optimize, config_header, arkode);
+    build_examples(b, target, optimize, features, config_header, arkode, &sundials_targets);
+    build_unit_tests(b, target, optimize, features, config_header, arkode, &sundials_targets);
+    build_benchmarks(b, target, optimize, config_header, arkode, &sundials_targets);
+
+    const zcc_step = zcc.createStep(b, "cdb", sundials_targets.toOwnedSlice(b.allocator) catch @panic("OOM"));
+    zcc_step.dependOn(&arkode.step);
 }
 
 const SundialsRunTarget = struct {
@@ -514,6 +519,7 @@ fn build_benchmarks(
     optimize: std.builtin.OptimizeMode,
     config_header: *std.Build.Step.ConfigHeader,
     arkode: *std.Build.Step.Compile,
+    sundials_exes: *std.ArrayList(*std.Build.Step.Compile),
 ) void {
     const benchmarks = [_]SundialsRunTarget{
         .{
@@ -555,6 +561,7 @@ fn build_benchmarks(
         );
         exe.addIncludePath(b.path("benchmarks/nvector"));
         b.installArtifact(exe);
+        sundials_exes.append(b.allocator, exe) catch @panic("OOM");
 
         for (benchmark.run_infos) |run_info| {
             const run_benchmark = b.addRunArtifact(exe);
@@ -572,6 +579,7 @@ fn build_examples(
     features: SundialsFeatures,
     config_header: *std.Build.Step.ConfigHeader,
     arkode: *std.Build.Step.Compile,
+    sundials_exes: *std.ArrayList(*std.Build.Step.Compile),
 ) void {
     var arkode_examples = std.ArrayList(SundialsRunTarget).initCapacity(b.allocator, 64) catch @panic("OOM");
     defer arkode_examples.deinit(b.allocator);
@@ -1024,6 +1032,7 @@ fn build_examples(
         );
         exe.addIncludePath(b.path("examples/utilities"));
         b.installArtifact(exe);
+        sundials_exes.append(b.allocator, exe) catch @panic("OOM");
 
         for (arkode_example.run_infos) |run_info| {
             const run_example = b.addRunArtifact(exe);
@@ -1041,6 +1050,7 @@ fn build_unit_tests(
     features: SundialsFeatures,
     config_header: *std.Build.Step.ConfigHeader,
     arkode: *std.Build.Step.Compile,
+    sundials_exes: *std.ArrayList(*std.Build.Step.Compile),
 ) void {
     var unit_tests = std.ArrayList(SundialsRunTarget).initCapacity(b.allocator, 64) catch @panic("OOM");
     defer unit_tests.deinit(b.allocator);
@@ -1764,6 +1774,7 @@ fn build_unit_tests(
         }
 
         b.installArtifact(exe);
+        sundials_exes.append(b.allocator, exe) catch @panic("OOM");
 
         for (unit_test.run_infos) |run_info| {
             const run_unit_test = b.addRunArtifact(exe);
