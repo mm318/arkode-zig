@@ -17,7 +17,6 @@
 #include <iterator>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <new>
 #include <numeric>
 #include <span>
@@ -38,9 +37,11 @@
 
 #include "sundials_vulkan.h"
 
-#define ZERO SUN_RCONST(0.0)
-#define ONE  SUN_RCONST(1.0)
-#define TWO  SUN_RCONST(2.0)
+#define ZERO   SUN_RCONST(0.0)
+#define HALF   SUN_RCONST(0.5)
+#define ONE    SUN_RCONST(1.0)
+#define ONEPT5 SUN_RCONST(1.5)
+#define TWO    SUN_RCONST(2.0)
 
 using namespace sundials;
 using namespace sundials::vulkan;
@@ -626,9 +627,10 @@ SUNErrCode N_VSetKernelExecPolicy_Vulkan(N_Vector x,
 
 N_Vector N_VCloneEmpty_Vulkan(N_Vector w)
 {
-  N_Vector v = N_VNew_Vulkan(NVEC_VULKAN_LENGTH(w), w->sunctx);
+  N_Vector v = N_VNewEmpty_Vulkan(w->sunctx);
   if (v == NULL) { return NULL; }
 
+  NVEC_VULKAN_LENGTH(v)           = NVEC_VULKAN_LENGTH(w);
   NVEC_VULKAN_PRIVATE(v)->manager = NVEC_VULKAN_PRIVATE(w)->manager;
 
   return v;
@@ -640,7 +642,6 @@ N_Vector N_VClone_Vulkan(N_Vector w)
   if (v == NULL) { return NULL; }
 
   // Deep copy: if source is a pointer, we must copy the data to v's vector
-  // (v was already created with a vector via N_VCloneEmpty_Vulkan)
   auto* priv_w = NVEC_VULKAN_PRIVATE(w);
   if (std::holds_alternative<std::vector<sunrealtype>>(priv_w->host_data))
   {
@@ -649,7 +650,9 @@ N_Vector N_VClone_Vulkan(N_Vector w)
   }
   else
   {
-    // Source is a pointer - copy data into v's existing vector
+    // Source is a pointer - allocate vector and copy data
+    NVEC_VULKAN_PRIVATE(v)->host_data =
+      std::vector<sunrealtype>(NVEC_VULKAN_LENGTH(w));
     const auto hw = HostData(w);
     auto hv       = HostData(v);
     std::copy(hw.begin(), hw.end(), hv.begin());
@@ -763,21 +766,19 @@ sunrealtype N_VWrmsNormMask_Vulkan(N_Vector x, N_Vector w, N_Vector id)
   N_VCopyFromDevice_Vulkan(x);
   N_VCopyFromDevice_Vulkan(w);
   N_VCopyFromDevice_Vulkan(id);
-  const auto hx    = HostData(x);
-  const auto hw    = HostData(w);
-  const auto hid   = HostData(id);
-  sunrealtype sum  = ZERO;
-  sunindextype cnt = 0;
+  const auto hx   = HostData(x);
+  const auto hw   = HostData(w);
+  const auto hid  = HostData(id);
+  sunrealtype sum = ZERO;
   for (size_t i = 0; i < hx.size(); ++i)
   {
     if (hid[i] > ZERO)
     {
       sunrealtype v = hx[i] * hw[i];
       sum += v * v;
-      cnt++;
     }
   }
-  return cnt == 0 ? ZERO : std::sqrt(sum / cnt);
+  return std::sqrt(sum / NVEC_VULKAN_LENGTH(x));
 }
 
 sunrealtype N_VMin_Vulkan(N_Vector x)
@@ -842,34 +843,44 @@ sunbooleantype N_VConstrMask_Vulkan(N_Vector c, N_Vector x, N_Vector m)
   const auto hc = HostData(c);
   const auto hx = HostData(x);
 
-  // Initialize m to zero
-  std::fill(hm.begin(), hm.end(), ZERO);
-
-  sunbooleantype test = SUNTRUE;
+  sunrealtype temp = ZERO;
   for (size_t i = 0; i < hx.size(); ++i)
   {
-    if ((hc[i] == -ONE && hx[i] <= ZERO) || (hc[i] == ONE && hx[i] >= ZERO) ||
-        (hc[i] == TWO && hx[i] == ZERO))
-    {
-      hm[i] = ONE;
-      test  = SUNFALSE;
-    }
+    hm[i] = ZERO;
+
+    // Continue if no constraints were set for the variable
+    if (hc[i] == ZERO) { continue; }
+
+    // Check if a set constraint has been violated
+    // |c| > 1.5 means c = ±2: strict inequality (x*c must be > 0)
+    // |c| > 0.5 means c = ±1 or ±2: non-strict inequality (x*c must be >= 0)
+    sunbooleantype violated = (std::abs(hc[i]) > ONEPT5 && hx[i] * hc[i] <= ZERO) ||
+                              (std::abs(hc[i]) > HALF && hx[i] * hc[i] < ZERO);
+    if (violated) { temp = hm[i] = ONE; }
   }
   MarkDeviceNeedsUpdate(m);
 
-  return test;
+  // Return false if any constraint was violated
+  return (temp == ONE) ? SUNFALSE : SUNTRUE;
 }
 
 sunrealtype N_VMinQuotient_Vulkan(N_Vector num, N_Vector denom)
 {
   N_VCopyFromDevice_Vulkan(num);
   N_VCopyFromDevice_Vulkan(denom);
-  const auto hn   = HostData(num);
-  const auto hd   = HostData(denom);
-  sunrealtype min = std::numeric_limits<sunrealtype>::infinity();
+  const auto hn        = HostData(num);
+  const auto hd        = HostData(denom);
+  sunbooleantype found = SUNFALSE;
+  sunrealtype min      = SUN_BIG_REAL;
   for (size_t i = 0; i < hn.size(); ++i)
   {
-    if (hd[i] != ZERO) { min = std::min(min, hn[i] / hd[i]); }
+    if (hd[i] == ZERO) { continue; }
+    if (!found)
+    {
+      min   = hn[i] / hd[i];
+      found = SUNTRUE;
+    }
+    else { min = std::min(min, hn[i] / hd[i]); }
   }
   return min;
 }
