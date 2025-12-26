@@ -231,6 +231,9 @@ void N_VCopyFromDevice_Vulkan(N_Vector v)
 // Slang compilation helpers
 // ---------------------------------------------------------------------------
 
+static constexpr std::array<uint32_t, 3> kLocalSizes = {256, 1, 1};
+
+// Element-wise shader
 static const std::string ElementwiseShaderSource()
 {
   const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
@@ -284,9 +287,140 @@ void main(uint3 dtid : SV_DispatchThreadID)
   return src;
 }
 
+// Dot product shader
+static const std::string DotProdShaderSource()
+{
+  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+
+  // Parallel reduction shader for dot product.
+  // Each workgroup computes a partial sum using shared memory reduction.
+  // Each thread processes two elements, then we reduce within the workgroup.
+  std::string src = fmt::format(R"(
+struct Params {{
+    uint n;
+    uint numGroups;
+    uint pad1;
+    uint pad2;
+}};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<{0}> X;
+[[vk::binding(1,0)]] RWStructuredBuffer<{0}> Y;
+[[vk::binding(2,0)]] RWStructuredBuffer<{0}> partialSums;
+
+groupshared {0} sdata[LOCAL_SIZE_X];
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
+{{
+    uint tid = gtid.x;
+    uint i = gid.x * (LOCAL_SIZE_X * 2) + tid;
+    uint gridSize = LOCAL_SIZE_X * 2 * params.numGroups;
+
+    // Grid-stride loop to handle arbitrarily large inputs
+    {0} sum = ({0})0.0;
+    while (i < params.n) {{
+        sum += X[i] * Y[i];
+        if (i + LOCAL_SIZE_X < params.n) {{
+            sum += X[i + LOCAL_SIZE_X] * Y[i + LOCAL_SIZE_X];
+        }}
+        i += gridSize;
+    }}
+    sdata[tid] = sum;
+    GroupMemoryBarrierWithGroupSync();
+
+    // Reduction in shared memory
+    if (LOCAL_SIZE_X >= 512) {{ if (tid < 256) {{ sdata[tid] += sdata[tid + 256]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 256) {{ if (tid < 128) {{ sdata[tid] += sdata[tid + 128]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 128) {{ if (tid < 64) {{ sdata[tid] += sdata[tid + 64]; }} GroupMemoryBarrierWithGroupSync(); }}
+
+    // Warp-level reduction (Vulkan/SPIR-V requires explicit sync for correctness)
+    if (tid < 32) {{
+        if (LOCAL_SIZE_X >= 64) {{ sdata[tid] += sdata[tid + 32]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 32) {{ sdata[tid] += sdata[tid + 16]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 16) {{ sdata[tid] += sdata[tid + 8]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 8) {{ sdata[tid] += sdata[tid + 4]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 4) {{ sdata[tid] += sdata[tid + 2]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 2) {{ sdata[tid] += sdata[tid + 1]; }}
+    }}
+
+    // Thread 0 writes this workgroup's partial sum
+    if (tid == 0) {{
+        partialSums[gid.x] = sdata[0];
+    }}
+}}
+)", real);
+
+  return src;
+}
+
+// Reduction shader: sums partial results from first pass
+static const std::string SumReduceShaderSource()
+{
+  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+
+  std::string src = fmt::format(R"(
+struct Params {{
+    uint n;        // number of partial sums to reduce
+    uint pad0;
+    uint pad1;
+    uint pad2;
+}};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<{0}> partialSums;
+[[vk::binding(1,0)]] RWStructuredBuffer<{0}> result;
+
+groupshared {0} sdata[LOCAL_SIZE_X];
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 gtid : SV_GroupThreadID, uint3 dtid : SV_DispatchThreadID)
+{{
+    uint tid = gtid.x;
+
+    // Load partial sums into shared memory
+    {0} sum = ({0})0.0;
+    if (tid < params.n) {{
+        sum = partialSums[tid];
+    }}
+    // Handle case where we have more partial sums than threads
+    for (uint i = tid + LOCAL_SIZE_X; i < params.n; i += LOCAL_SIZE_X) {{
+        sum += partialSums[i];
+    }}
+    sdata[tid] = sum;
+    GroupMemoryBarrierWithGroupSync();
+
+    // Reduction in shared memory
+    if (LOCAL_SIZE_X >= 512) {{ if (tid < 256) {{ sdata[tid] += sdata[tid + 256]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 256) {{ if (tid < 128) {{ sdata[tid] += sdata[tid + 128]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 128) {{ if (tid < 64) {{ sdata[tid] += sdata[tid + 64]; }} GroupMemoryBarrierWithGroupSync(); }}
+
+    if (tid < 32) {{
+        if (LOCAL_SIZE_X >= 64) {{ sdata[tid] += sdata[tid + 32]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 32) {{ sdata[tid] += sdata[tid + 16]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 16) {{ sdata[tid] += sdata[tid + 8]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 8) {{ sdata[tid] += sdata[tid + 4]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 4) {{ sdata[tid] += sdata[tid + 2]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 2) {{ sdata[tid] += sdata[tid + 1]; }}
+    }}
+
+    // Thread 0 writes final result
+    if (tid == 0) {{
+        result[0] = sdata[0];
+    }}
+}}
+)", real);
+
+  return src;
+}
+
 static std::vector<uint32_t> CompileSlangToSpirv(
   const std::string& source, const std::string& entry,
-  const std::array<uint32_t, 3>& localSize)
+  const std::array<uint32_t, 3>& localSizes)
 {
   std::filesystem::path tmpdir = std::filesystem::temp_directory_path();
   std::filesystem::path src    = tmpdir / "nvector_vulkan_tmp.slang";
@@ -299,9 +433,9 @@ static std::vector<uint32_t> CompileSlangToSpirv(
 
   std::stringstream cmd;
   cmd << "slangc -target spirv -profile cs_6_2 -entry " << entry << " "
-      << "-DLOCAL_SIZE_X=" << localSize[0] << " "
-      << "-DLOCAL_SIZE_Y=" << localSize[1] << " "
-      << "-DLOCAL_SIZE_Z=" << localSize[2] << " "
+      << "-DLOCAL_SIZE_X=" << localSizes[0] << " "
+      << "-DLOCAL_SIZE_Y=" << localSizes[1] << " "
+      << "-DLOCAL_SIZE_Z=" << localSizes[2] << " "
       << "-o " << spv << " " << src;
 
   int rc = std::system(cmd.str().c_str());
@@ -329,7 +463,21 @@ static std::vector<uint32_t> CompileSlangToSpirv(
 static const std::vector<uint32_t>& GetElementwiseSpirv()
 {
   static std::vector<uint32_t> spirv =
-    CompileSlangToSpirv(ElementwiseShaderSource(), "main", {256, 1, 1});
+    CompileSlangToSpirv(ElementwiseShaderSource(), "main", kLocalSizes);
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetDotProdSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(DotProdShaderSource(), "main", kLocalSizes);
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetSumReduceSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(SumReduceShaderSource(), "main", kLocalSizes);
   return spirv;
 }
 
@@ -404,6 +552,103 @@ static void DispatchElementwise(ElementwiseOp op, sunrealtype a, sunrealtype b,
                                 HostData(z));
   privZ->device_needs_update = false;
   privZ->host_needs_update   = false;
+}
+
+// GPU-accelerated dot product using parallel reduction
+static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
+{
+  auto* privX = NVEC_VULKAN_PRIVATE(x);
+  auto* privY = NVEC_VULKAN_PRIVATE(y);
+
+  N_VCopyToDevice_Vulkan(x);
+  N_VCopyToDevice_Vulkan(y);
+
+  const uint32_t n = static_cast<uint32_t>(NVEC_VULKAN_LENGTH(x));
+
+  // Use reduce_exec_policy for reduction operations (optimized for reductions).
+  // The policy's blockSize() must match the shader's LOCAL_SIZE_X (256).
+  auto* reduce_policy      = NVEC_VULKAN_CONTENT(x)->reduce_exec_policy;
+  const uint32_t blockSize = reduce_policy->blockSize(n);
+  const uint32_t numGroups = reduce_policy->gridSize(n);
+
+  // Sanity check: shader was compiled with LOCAL_SIZE_X=256
+  assert(blockSize == kLocalSizes[0] && "reduce_exec_policy blockSize must match shader LOCAL_SIZE_X");
+
+  // Create tensor for partial sums (one per workgroup)
+  auto partialSumsTensor = privX->manager->tensor(
+    nullptr, numGroups, sizeof(ShaderFloat), kp::Memory::dataType<ShaderFloat>(),
+    kp::Memory::MemoryTypes::eDevice);
+
+  // Create tensor for final result (single element)
+  auto resultTensor = privX->manager->tensor(
+    nullptr, 1, sizeof(ShaderFloat), kp::Memory::dataType<ShaderFloat>(),
+    kp::Memory::MemoryTypes::eDevice);
+
+  // First pass: compute partial sums per workgroup
+  {
+    const auto& spirv = GetDotProdSpirv();
+
+    std::vector<std::shared_ptr<kp::Memory>> memObjects;
+    memObjects.push_back(privX->device_data);
+    memObjects.push_back(privY->device_data);
+    memObjects.push_back(partialSumsTensor);
+
+    struct Push
+    {
+      uint32_t n;
+      uint32_t numGroups;
+      uint32_t pad1;
+      uint32_t pad2;
+    };
+    Push push{n, numGroups, 0, 0};
+
+    std::vector<uint8_t> pushConstants(sizeof(Push));
+    std::memcpy(pushConstants.data(), &push, sizeof(Push));
+
+    auto seq = privX->manager->sequence();
+    seq->record<kp::OpSyncDevice>(memObjects);
+
+    auto algo = privX->manager->algorithm(
+      memObjects, spirv, {numGroups, 1, 1}, std::vector<uint32_t>{}, pushConstants);
+
+    seq->record<kp::OpAlgoDispatch>(algo);
+    seq->eval();
+  }
+
+  // Second pass: reduce partial sums to final result
+  {
+    const auto& spirv = GetSumReduceSpirv();
+
+    std::vector<std::shared_ptr<kp::Memory>> memObjects;
+    memObjects.push_back(partialSumsTensor);
+    memObjects.push_back(resultTensor);
+
+    struct Push
+    {
+      uint32_t n;
+      uint32_t pad0;
+      uint32_t pad1;
+      uint32_t pad2;
+    };
+    Push push{numGroups, 0, 0, 0};
+
+    std::vector<uint8_t> pushConstants(sizeof(Push));
+    std::memcpy(pushConstants.data(), &push, sizeof(Push));
+
+    auto seq = privX->manager->sequence();
+
+    auto algo = privX->manager->algorithm(
+      memObjects, spirv, {1, 1, 1}, std::vector<uint32_t>{}, pushConstants);
+
+    seq->record<kp::OpAlgoDispatch>(algo);
+    seq->record<kp::OpSyncLocal>(
+      {std::static_pointer_cast<kp::Memory>(resultTensor)});
+    seq->eval();
+  }
+
+  // Read result back
+  ShaderFloat result = resultTensor->data<ShaderFloat>()[0];
+  return static_cast<sunrealtype>(result);
 }
 
 // ---------------------------------------------------------------------------
@@ -727,14 +972,9 @@ void N_VAddConst_Vulkan(N_Vector x, sunrealtype b, N_Vector z)
   DispatchElementwise(ElementwiseOp::AddConst, b, 0.0, x, nullptr, z);
 }
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VDotProd_Vulkan(N_Vector x, N_Vector y)
 {
-  N_VCopyFromDevice_Vulkan(x);
-  N_VCopyFromDevice_Vulkan(y);
-  const auto hx = HostData(x);
-  const auto hy = HostData(y);
-  return std::inner_product(hx.begin(), hx.end(), hy.begin(), ZERO);
+  return DispatchDotProdReduction(x, y);
 }
 
 // TODO: this is currently very much like the nvector_serial implementation. fix.
