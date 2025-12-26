@@ -10,16 +10,19 @@
 #ifndef _SUNDIALS_VULKANEXECPOLICIES_HPP
 #define _SUNDIALS_VULKANEXECPOLICIES_HPP
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
 namespace sundials {
 namespace vulkan {
 
+static constexpr std::array<uint32_t, 3> kLocalSizes = {256, 1, 1};
+
 class ExecPolicy
 {
 public:
-  explicit ExecPolicy(uint32_t workgroupSize = 256u)
+  explicit ExecPolicy(uint32_t workgroupSize = kLocalSizes[0])
     : workgroupSize_(workgroupSize)
   {}
 
@@ -52,7 +55,7 @@ protected:
 class AtomicReduceExecPolicy : public ExecPolicy
 {
 public:
-  explicit AtomicReduceExecPolicy(uint32_t workgroupSize = 256u,
+  explicit AtomicReduceExecPolicy(uint32_t workgroupSize = kLocalSizes[0],
                                   uint32_t gridSize      = 0u)
     : ExecPolicy(workgroupSize), gridSize_(gridSize)
   {}

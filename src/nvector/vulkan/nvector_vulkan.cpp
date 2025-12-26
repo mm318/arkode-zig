@@ -231,8 +231,6 @@ void N_VCopyFromDevice_Vulkan(N_Vector v)
 // Slang compilation helpers
 // ---------------------------------------------------------------------------
 
-static constexpr std::array<uint32_t, 3> kLocalSizes = {256, 1, 1};
-
 // Element-wise shader
 static const std::string ElementwiseShaderSource()
 {
@@ -351,13 +349,14 @@ void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
         partialSums[gid.x] = sdata[0];
     }}
 }}
-)", real);
+)",
+                                real);
 
   return src;
 }
 
 // Reduction shader: sums partial results from first pass
-static const std::string SumReduceShaderSource()
+static const std::string FinalSumReduceShaderSource()
 {
   const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
 
@@ -413,7 +412,135 @@ void main(uint3 gtid : SV_GroupThreadID, uint3 dtid : SV_DispatchThreadID)
         result[0] = sdata[0];
     }}
 }}
-)", real);
+)",
+                                real);
+
+  return src;
+}
+
+// MaxNorm reduction shader (computes max(abs(x)))
+static const std::string MaxNormShaderSource()
+{
+  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+
+  std::string src = fmt::format(R"(
+struct Params {{
+    uint n;
+    uint numGroups;
+    uint pad1;
+    uint pad2;
+}};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<{0}> X;
+[[vk::binding(1,0)]] RWStructuredBuffer<{0}> partialMax;
+
+groupshared {0} sdata[LOCAL_SIZE_X];
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
+{{
+    uint tid = gtid.x;
+    uint i = gid.x * (LOCAL_SIZE_X * 2) + tid;
+    uint gridSize = LOCAL_SIZE_X * 2 * params.numGroups;
+
+    // Grid-stride loop to find max absolute value
+    {0} maxVal = ({0})0.0;
+    while (i < params.n) {{
+        {0} val = abs(X[i]);
+        if (val > maxVal) maxVal = val;
+        if (i + LOCAL_SIZE_X < params.n) {{
+            val = abs(X[i + LOCAL_SIZE_X]);
+            if (val > maxVal) maxVal = val;
+        }}
+        i += gridSize;
+    }}
+    sdata[tid] = maxVal;
+    GroupMemoryBarrierWithGroupSync();
+
+    // Reduction in shared memory using max
+    if (LOCAL_SIZE_X >= 512) {{ if (tid < 256) {{ if (sdata[tid + 256] > sdata[tid]) sdata[tid] = sdata[tid + 256]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 256) {{ if (tid < 128) {{ if (sdata[tid + 128] > sdata[tid]) sdata[tid] = sdata[tid + 128]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 128) {{ if (tid < 64) {{ if (sdata[tid + 64] > sdata[tid]) sdata[tid] = sdata[tid + 64]; }} GroupMemoryBarrierWithGroupSync(); }}
+
+    if (tid < 32) {{
+        if (LOCAL_SIZE_X >= 64) {{ if (sdata[tid + 32] > sdata[tid]) sdata[tid] = sdata[tid + 32]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 32) {{ if (sdata[tid + 16] > sdata[tid]) sdata[tid] = sdata[tid + 16]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 16) {{ if (sdata[tid + 8] > sdata[tid]) sdata[tid] = sdata[tid + 8]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 8) {{ if (sdata[tid + 4] > sdata[tid]) sdata[tid] = sdata[tid + 4]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 4) {{ if (sdata[tid + 2] > sdata[tid]) sdata[tid] = sdata[tid + 2]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 2) {{ if (sdata[tid + 1] > sdata[tid]) sdata[tid] = sdata[tid + 1]; }}
+    }}
+
+    if (tid == 0) {{
+        partialMax[gid.x] = sdata[0];
+    }}
+}}
+)",
+                                real);
+
+  return src;
+}
+
+// Final max reduction shader: finds max of partial results
+static const std::string FinalMaxReduceShaderSource()
+{
+  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+
+  std::string src = fmt::format(R"(
+struct Params {{
+    uint n;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+}};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<{0}> partialMax;
+[[vk::binding(1,0)]] RWStructuredBuffer<{0}> result;
+
+groupshared {0} sdata[LOCAL_SIZE_X];
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 gtid : SV_GroupThreadID)
+{{
+    uint tid = gtid.x;
+
+    // Load partial max values into shared memory
+    {0} maxVal = ({0})0.0;
+    if (tid < params.n) {{
+        maxVal = partialMax[tid];
+    }}
+    for (uint i = tid + LOCAL_SIZE_X; i < params.n; i += LOCAL_SIZE_X) {{
+        if (partialMax[i] > maxVal) maxVal = partialMax[i];
+    }}
+    sdata[tid] = maxVal;
+    GroupMemoryBarrierWithGroupSync();
+
+    // Reduction using max
+    if (LOCAL_SIZE_X >= 512) {{ if (tid < 256) {{ if (sdata[tid + 256] > sdata[tid]) sdata[tid] = sdata[tid + 256]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 256) {{ if (tid < 128) {{ if (sdata[tid + 128] > sdata[tid]) sdata[tid] = sdata[tid + 128]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 128) {{ if (tid < 64) {{ if (sdata[tid + 64] > sdata[tid]) sdata[tid] = sdata[tid + 64]; }} GroupMemoryBarrierWithGroupSync(); }}
+
+    if (tid < 32) {{
+        if (LOCAL_SIZE_X >= 64) {{ if (sdata[tid + 32] > sdata[tid]) sdata[tid] = sdata[tid + 32]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 32) {{ if (sdata[tid + 16] > sdata[tid]) sdata[tid] = sdata[tid + 16]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 16) {{ if (sdata[tid + 8] > sdata[tid]) sdata[tid] = sdata[tid + 8]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 8) {{ if (sdata[tid + 4] > sdata[tid]) sdata[tid] = sdata[tid + 4]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 4) {{ if (sdata[tid + 2] > sdata[tid]) sdata[tid] = sdata[tid + 2]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 2) {{ if (sdata[tid + 1] > sdata[tid]) sdata[tid] = sdata[tid + 1]; }}
+    }}
+
+    if (tid == 0) {{
+        result[0] = sdata[0];
+    }}
+}}
+)",
+                                real);
 
   return src;
 }
@@ -474,10 +601,24 @@ static const std::vector<uint32_t>& GetDotProdSpirv()
   return spirv;
 }
 
-static const std::vector<uint32_t>& GetSumReduceSpirv()
+static const std::vector<uint32_t>& GetFinalSumReduceSpirv()
 {
   static std::vector<uint32_t> spirv =
-    CompileSlangToSpirv(SumReduceShaderSource(), "main", kLocalSizes);
+    CompileSlangToSpirv(FinalSumReduceShaderSource(), "main", kLocalSizes);
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetMaxNormSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(MaxNormShaderSource(), "main", {256, 1, 1});
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetFinalMaxReduceSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(FinalMaxReduceShaderSource(), "main", {256, 1, 1});
   return spirv;
 }
 
@@ -572,17 +713,19 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
   const uint32_t numGroups = reduce_policy->gridSize(n);
 
   // Sanity check: shader was compiled with LOCAL_SIZE_X=256
-  assert(blockSize == kLocalSizes[0] && "reduce_exec_policy blockSize must match shader LOCAL_SIZE_X");
+  assert(blockSize == kLocalSizes[0] &&
+         "reduce_exec_policy blockSize must match shader LOCAL_SIZE_X");
 
   // Create tensor for partial sums (one per workgroup)
-  auto partialSumsTensor = privX->manager->tensor(
-    nullptr, numGroups, sizeof(ShaderFloat), kp::Memory::dataType<ShaderFloat>(),
-    kp::Memory::MemoryTypes::eDevice);
+  auto partialSumsTensor =
+    privX->manager->tensor(nullptr, numGroups, sizeof(ShaderFloat),
+                           kp::Memory::dataType<ShaderFloat>(),
+                           kp::Memory::MemoryTypes::eDevice);
 
   // Create tensor for final result (single element)
-  auto resultTensor = privX->manager->tensor(
-    nullptr, 1, sizeof(ShaderFloat), kp::Memory::dataType<ShaderFloat>(),
-    kp::Memory::MemoryTypes::eDevice);
+  auto resultTensor = privX->manager->tensor(nullptr, 1, sizeof(ShaderFloat),
+                                             kp::Memory::dataType<ShaderFloat>(),
+                                             kp::Memory::MemoryTypes::eDevice);
 
   // First pass: compute partial sums per workgroup
   {
@@ -600,6 +743,7 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
       uint32_t pad1;
       uint32_t pad2;
     };
+
     Push push{n, numGroups, 0, 0};
 
     std::vector<uint8_t> pushConstants(sizeof(Push));
@@ -608,8 +752,8 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
     auto seq = privX->manager->sequence();
     seq->record<kp::OpSyncDevice>(memObjects);
 
-    auto algo = privX->manager->algorithm(
-      memObjects, spirv, {numGroups, 1, 1}, std::vector<uint32_t>{}, pushConstants);
+    auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
+                                          std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
     seq->eval();
@@ -617,7 +761,7 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
 
   // Second pass: reduce partial sums to final result
   {
-    const auto& spirv = GetSumReduceSpirv();
+    const auto& spirv = GetFinalSumReduceSpirv();
 
     std::vector<std::shared_ptr<kp::Memory>> memObjects;
     memObjects.push_back(partialSumsTensor);
@@ -630,6 +774,7 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
       uint32_t pad1;
       uint32_t pad2;
     };
+
     Push push{numGroups, 0, 0, 0};
 
     std::vector<uint8_t> pushConstants(sizeof(Push));
@@ -637,8 +782,103 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
 
     auto seq = privX->manager->sequence();
 
-    auto algo = privX->manager->algorithm(
-      memObjects, spirv, {1, 1, 1}, std::vector<uint32_t>{}, pushConstants);
+    auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
+                                          std::vector<uint32_t>{}, pushConstants);
+
+    seq->record<kp::OpAlgoDispatch>(algo);
+    seq->record<kp::OpSyncLocal>(
+      {std::static_pointer_cast<kp::Memory>(resultTensor)});
+    seq->eval();
+  }
+
+  // Read result back
+  ShaderFloat result = resultTensor->data<ShaderFloat>()[0];
+  return static_cast<sunrealtype>(result);
+}
+
+// GPU-accelerated max norm using parallel reduction
+static sunrealtype DispatchMaxNormReduction(N_Vector x)
+{
+  auto* privX = NVEC_VULKAN_PRIVATE(x);
+
+  N_VCopyToDevice_Vulkan(x);
+
+  const uint32_t n = static_cast<uint32_t>(NVEC_VULKAN_LENGTH(x));
+
+  auto* reduce_policy      = NVEC_VULKAN_CONTENT(x)->reduce_exec_policy;
+  const uint32_t blockSize = reduce_policy->blockSize(n);
+  const uint32_t numGroups = reduce_policy->gridSize(n);
+
+  assert(blockSize == kLocalSizes[0] &&
+         "reduce_exec_policy blockSize must match shader LOCAL_SIZE_X");
+
+  // Create tensor for partial max values (one per workgroup)
+  auto partialMaxTensor =
+    privX->manager->tensor(nullptr, numGroups, sizeof(ShaderFloat),
+                           kp::Memory::dataType<ShaderFloat>(),
+                           kp::Memory::MemoryTypes::eDevice);
+
+  // Create tensor for final result (single element)
+  auto resultTensor = privX->manager->tensor(nullptr, 1, sizeof(ShaderFloat),
+                                             kp::Memory::dataType<ShaderFloat>(),
+                                             kp::Memory::MemoryTypes::eDevice);
+
+  // First pass: compute partial max per workgroup
+  {
+    const auto& spirv = GetMaxNormSpirv();
+
+    std::vector<std::shared_ptr<kp::Memory>> memObjects;
+    memObjects.push_back(privX->device_data);
+    memObjects.push_back(partialMaxTensor);
+
+    struct Push
+    {
+      uint32_t n;
+      uint32_t numGroups;
+      uint32_t pad1;
+      uint32_t pad2;
+    };
+
+    Push push{n, numGroups, 0, 0};
+
+    std::vector<uint8_t> pushConstants(sizeof(Push));
+    std::memcpy(pushConstants.data(), &push, sizeof(Push));
+
+    auto seq = privX->manager->sequence();
+    seq->record<kp::OpSyncDevice>(memObjects);
+
+    auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
+                                          std::vector<uint32_t>{}, pushConstants);
+
+    seq->record<kp::OpAlgoDispatch>(algo);
+    seq->eval();
+  }
+
+  // Second pass: reduce partial max values to final result
+  {
+    const auto& spirv = GetFinalMaxReduceSpirv();
+
+    std::vector<std::shared_ptr<kp::Memory>> memObjects;
+    memObjects.push_back(partialMaxTensor);
+    memObjects.push_back(resultTensor);
+
+    struct Push
+    {
+      uint32_t n;
+      uint32_t pad0;
+      uint32_t pad1;
+      uint32_t pad2;
+    };
+
+    Push push{numGroups, 0, 0, 0};
+
+    std::vector<uint8_t> pushConstants(sizeof(Push));
+    std::memcpy(pushConstants.data(), &push, sizeof(Push));
+
+    auto seq = privX->manager->sequence();
+
+    auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
+                                          std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
     seq->record<kp::OpSyncLocal>(
@@ -980,11 +1220,7 @@ sunrealtype N_VDotProd_Vulkan(N_Vector x, N_Vector y)
 // TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VMaxNorm_Vulkan(N_Vector x)
 {
-  N_VCopyFromDevice_Vulkan(x);
-  const auto hx = HostData(x);
-  sunrealtype m = ZERO;
-  for (auto v : hx) m = std::max(m, std::abs(v));
-  return m;
+  return DispatchMaxNormReduction(x);
 }
 
 // TODO: this is currently very much like the nvector_serial implementation. fix.
