@@ -15,7 +15,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <limits>
 #include <memory>
 #include <new>
 #include <numeric>
@@ -728,6 +727,7 @@ void N_VAddConst_Vulkan(N_Vector x, sunrealtype b, N_Vector z)
   DispatchElementwise(ElementwiseOp::AddConst, b, 0.0, x, nullptr, z);
 }
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VDotProd_Vulkan(N_Vector x, N_Vector y)
 {
   N_VCopyFromDevice_Vulkan(x);
@@ -737,6 +737,7 @@ sunrealtype N_VDotProd_Vulkan(N_Vector x, N_Vector y)
   return std::inner_product(hx.begin(), hx.end(), hy.begin(), ZERO);
 }
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VMaxNorm_Vulkan(N_Vector x)
 {
   N_VCopyFromDevice_Vulkan(x);
@@ -746,6 +747,7 @@ sunrealtype N_VMaxNorm_Vulkan(N_Vector x)
   return m;
 }
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VWrmsNorm_Vulkan(N_Vector x, N_Vector w)
 {
   N_VCopyFromDevice_Vulkan(x);
@@ -761,6 +763,7 @@ sunrealtype N_VWrmsNorm_Vulkan(N_Vector x, N_Vector w)
   return std::sqrt(sum / hx.size());
 }
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VWrmsNormMask_Vulkan(N_Vector x, N_Vector w, N_Vector id)
 {
   N_VCopyFromDevice_Vulkan(x);
@@ -788,6 +791,7 @@ sunrealtype N_VMin_Vulkan(N_Vector x)
   return *std::min_element(hx.begin(), hx.end());
 }
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VWL2Norm_Vulkan(N_Vector x, N_Vector w)
 {
   N_VCopyFromDevice_Vulkan(x);
@@ -813,6 +817,7 @@ void N_VCompare_Vulkan(sunrealtype c, N_Vector x, N_Vector z)
   DispatchElementwise(ElementwiseOp::Compare, c, 0.0, x, nullptr, z);
 }
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunbooleantype N_VInvTest_Vulkan(N_Vector x, N_Vector z)
 {
   N_VCopyFromDevice_Vulkan(x);
@@ -834,6 +839,7 @@ sunbooleantype N_VInvTest_Vulkan(N_Vector x, N_Vector z)
   return result;
 }
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunbooleantype N_VConstrMask_Vulkan(N_Vector c, N_Vector x, N_Vector m)
 {
   N_VCopyFromDevice_Vulkan(c);
@@ -864,6 +870,7 @@ sunbooleantype N_VConstrMask_Vulkan(N_Vector c, N_Vector x, N_Vector m)
   return (temp == ONE) ? SUNFALSE : SUNTRUE;
 }
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VMinQuotient_Vulkan(N_Vector num, N_Vector denom)
 {
   N_VCopyFromDevice_Vulkan(num);
@@ -889,25 +896,75 @@ sunrealtype N_VMinQuotient_Vulkan(N_Vector num, N_Vector denom)
 // Fused ops
 // ---------------------------------------------------------------------------
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 SUNErrCode N_VLinearCombination_Vulkan(int nvec, sunrealtype* c, N_Vector* X,
                                        N_Vector Z)
 {
   if (nvec <= 0 || c == NULL || X == NULL) { return SUN_ERR_ARG_OUTOFRANGE; }
 
-  EnsureHostDataLength(Z, NVEC_VULKAN_LENGTH(Z));
+  // nvec == 1: should have called N_VScale
+  if (nvec == 1)
+  {
+    N_VScale_Vulkan(c[0], X[0], Z);
+    return SUN_SUCCESS;
+  }
+
+  // nvec == 2: should have called N_VLinearSum
+  if (nvec == 2)
+  {
+    N_VLinearSum_Vulkan(c[0], X[0], c[1], X[1], Z);
+    return SUN_SUCCESS;
+  }
+
+  sunindextype N = NVEC_VULKAN_LENGTH(Z);
+  EnsureHostDataLength(Z, N);
   auto hz = HostData(Z);
-  std::fill(hz.begin(), hz.end(), ZERO);
-  for (int j = 0; j < nvec; j++)
+
+  // X[0] += c[i]*X[i], i = 1,...,nvec-1
+  if ((X[0] == Z) && (c[0] == ONE))
+  {
+    N_VCopyFromDevice_Vulkan(Z);
+    for (int j = 1; j < nvec; j++)
+    {
+      N_VCopyFromDevice_Vulkan(X[j]);
+      const auto hx = HostData(X[j]);
+      for (sunindextype i = 0; i < N; ++i) { hz[i] += c[j] * hx[i]; }
+    }
+    MarkDeviceNeedsUpdate(Z);
+    return SUN_SUCCESS;
+  }
+
+  // X[0] = c[0] * X[0] + sum{ c[i] * X[i] }, i = 1,...,nvec-1
+  if (X[0] == Z)
+  {
+    N_VCopyFromDevice_Vulkan(Z);
+    for (sunindextype i = 0; i < N; ++i) { hz[i] *= c[0]; }
+    for (int j = 1; j < nvec; j++)
+    {
+      N_VCopyFromDevice_Vulkan(X[j]);
+      const auto hx = HostData(X[j]);
+      for (sunindextype i = 0; i < N; ++i) { hz[i] += c[j] * hx[i]; }
+    }
+    MarkDeviceNeedsUpdate(Z);
+    return SUN_SUCCESS;
+  }
+
+  // z = sum{ c[i] * X[i] }, i = 0,...,nvec-1
+  N_VCopyFromDevice_Vulkan(X[0]);
+  const auto hx0 = HostData(X[0]);
+  for (sunindextype i = 0; i < N; ++i) { hz[i] = c[0] * hx0[i]; }
+  for (int j = 1; j < nvec; j++)
   {
     N_VCopyFromDevice_Vulkan(X[j]);
     const auto hx = HostData(X[j]);
-    for (size_t i = 0; i < hz.size(); ++i) hz[i] += c[j] * hx[i];
+    for (sunindextype i = 0; i < N; ++i) { hz[i] += c[j] * hx[i]; }
   }
   MarkDeviceNeedsUpdate(Z);
 
   return SUN_SUCCESS;
 }
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 SUNErrCode N_VScaleAddMulti_Vulkan(int nvec, sunrealtype* c, N_Vector X,
                                    N_Vector* Y, N_Vector* Z)
 {
@@ -926,6 +983,7 @@ SUNErrCode N_VScaleAddMulti_Vulkan(int nvec, sunrealtype* c, N_Vector X,
   return SUN_SUCCESS;
 }
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 SUNErrCode N_VDotProdMulti_Vulkan(int nvec, N_Vector x, N_Vector* Y,
                                   sunrealtype* dotprods)
 {
@@ -967,24 +1025,181 @@ SUNErrCode N_VConstVectorArray_Vulkan(int nvec, sunrealtype c, N_Vector* Z)
   return SUN_SUCCESS;
 }
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 SUNErrCode N_VScaleAddMultiVectorArray_Vulkan(int nvec, int nsum,
                                               sunrealtype* a, N_Vector* X,
                                               N_Vector** Y, N_Vector** Z)
 {
-  for (int j = 0; j < nvec; j++)
+  if (nvec < 1 || nsum < 1) { return SUN_ERR_ARG_OUTOFRANGE; }
+
+  // Special case for nvec == 1
+  if (nvec == 1)
   {
-    N_VScaleAddMulti_Vulkan(nsum, a, X[j], Y[j], Z[j]);
+    // Should have called N_VLinearSum
+    if (nsum == 1)
+    {
+      N_VLinearSum_Vulkan(a[0], X[0], ONE, Y[0][0], Z[0][0]);
+      return SUN_SUCCESS;
+    }
+
+    // Should have called N_VScaleAddMulti
+    // Build temporary arrays: YY[j] = Y[j][0], ZZ[j] = Z[j][0]
+    std::vector<N_Vector> YY(nsum), ZZ(nsum);
+    for (int j = 0; j < nsum; j++)
+    {
+      YY[j] = Y[j][0];
+      ZZ[j] = Z[j][0];
+    }
+    return N_VScaleAddMulti_Vulkan(nsum, a, X[0], YY.data(), ZZ.data());
+  }
+
+  // Special case for nsum == 1: should have called N_VLinearSumVectorArray
+  if (nsum == 1)
+  {
+    return N_VLinearSumVectorArray_Vulkan(nvec, a[0], X, ONE, Y[0], Z[0]);
+  }
+
+  // General case: compute multiple linear sums
+  sunindextype N = NVEC_VULKAN_LENGTH(X[0]);
+
+  // Y[i][j] += a[i] * x[j] when Y == Z (in-place)
+  if (Y == Z)
+  {
+    for (int i = 0; i < nvec; i++)
+    {
+      N_VCopyFromDevice_Vulkan(X[i]);
+      const auto hx = HostData(X[i]);
+      for (int j = 0; j < nsum; j++)
+      {
+        N_VCopyFromDevice_Vulkan(Y[j][i]);
+        EnsureHostDataLength(Y[j][i], N);
+        auto hy = HostData(Y[j][i]);
+        for (sunindextype k = 0; k < N; k++) { hy[k] += a[j] * hx[k]; }
+        MarkDeviceNeedsUpdate(Y[j][i]);
+      }
+    }
+    return SUN_SUCCESS;
+  }
+
+  // Z[i][j] = a[i] * x[j] + y[i][j]
+  for (int i = 0; i < nvec; i++)
+  {
+    N_VCopyFromDevice_Vulkan(X[i]);
+    const auto hx = HostData(X[i]);
+    for (int j = 0; j < nsum; j++)
+    {
+      N_VCopyFromDevice_Vulkan(Y[j][i]);
+      EnsureHostDataLength(Z[j][i], N);
+      const auto hy = HostData(Y[j][i]);
+      auto hz       = HostData(Z[j][i]);
+      for (sunindextype k = 0; k < N; k++) { hz[k] = a[j] * hx[k] + hy[k]; }
+      MarkDeviceNeedsUpdate(Z[j][i]);
+    }
   }
   return SUN_SUCCESS;
 }
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 SUNErrCode N_VLinearCombinationVectorArray_Vulkan(int nvec, int nsum,
                                                   sunrealtype* c, N_Vector** X,
                                                   N_Vector* Z)
 {
+  if (nvec < 1 || nsum < 1) { return SUN_ERR_ARG_OUTOFRANGE; }
+
+  // Special case for nvec == 1
+  if (nvec == 1)
+  {
+    // Should have called N_VScale
+    if (nsum == 1)
+    {
+      N_VScale_Vulkan(c[0], X[0][0], Z[0]);
+      return SUN_SUCCESS;
+    }
+
+    // Should have called N_VLinearSum
+    if (nsum == 2)
+    {
+      N_VLinearSum_Vulkan(c[0], X[0][0], c[1], X[1][0], Z[0]);
+      return SUN_SUCCESS;
+    }
+
+    // Should have called N_VLinearCombination
+    // Build temporary array: Y[i] = X[i][0]
+    std::vector<N_Vector> Y(nsum);
+    for (int i = 0; i < nsum; i++) { Y[i] = X[i][0]; }
+    return N_VLinearCombination_Vulkan(nsum, c, Y.data(), Z[0]);
+  }
+
+  // Special case for nsum == 1: should have called N_VScaleVectorArray
+  if (nsum == 1)
+  {
+    std::vector<sunrealtype> ctmp(nvec, c[0]);
+    return N_VScaleVectorArray_Vulkan(nvec, ctmp.data(), X[0], Z);
+  }
+
+  // Special case for nsum == 2: should have called N_VLinearSumVectorArray
+  if (nsum == 2)
+  {
+    return N_VLinearSumVectorArray_Vulkan(nvec, c[0], X[0], c[1], X[1], Z);
+  }
+
+  // General case: compute linear combination
+  sunindextype N = NVEC_VULKAN_LENGTH(Z[0]);
+
+  // X[0][j] += c[i]*X[i][j], i = 1,...,nsum-1 when X[0] == Z and c[0] == 1
+  if ((X[0] == Z) && (c[0] == ONE))
+  {
+    for (int j = 0; j < nvec; j++)
+    {
+      N_VCopyFromDevice_Vulkan(Z[j]);
+      EnsureHostDataLength(Z[j], N);
+      auto hz = HostData(Z[j]);
+      for (int i = 1; i < nsum; i++)
+      {
+        N_VCopyFromDevice_Vulkan(X[i][j]);
+        const auto hx = HostData(X[i][j]);
+        for (sunindextype k = 0; k < N; k++) { hz[k] += c[i] * hx[k]; }
+      }
+      MarkDeviceNeedsUpdate(Z[j]);
+    }
+    return SUN_SUCCESS;
+  }
+
+  // X[0][j] = c[0] * X[0][j] + sum{ c[i] * X[i][j] }, i = 1,...,nsum-1
+  if (X[0] == Z)
+  {
+    for (int j = 0; j < nvec; j++)
+    {
+      N_VCopyFromDevice_Vulkan(Z[j]);
+      EnsureHostDataLength(Z[j], N);
+      auto hz = HostData(Z[j]);
+      for (sunindextype k = 0; k < N; k++) { hz[k] *= c[0]; }
+      for (int i = 1; i < nsum; i++)
+      {
+        N_VCopyFromDevice_Vulkan(X[i][j]);
+        const auto hx = HostData(X[i][j]);
+        for (sunindextype k = 0; k < N; k++) { hz[k] += c[i] * hx[k]; }
+      }
+      MarkDeviceNeedsUpdate(Z[j]);
+    }
+    return SUN_SUCCESS;
+  }
+
+  // Z[j] = sum{ c[i] * X[i][j] }, i = 0,...,nsum-1
   for (int j = 0; j < nvec; j++)
   {
-    N_VLinearCombination_Vulkan(nsum, c, X[j], Z[j]);
+    N_VCopyFromDevice_Vulkan(X[0][j]);
+    EnsureHostDataLength(Z[j], N);
+    const auto hx0 = HostData(X[0][j]);
+    auto hz        = HostData(Z[j]);
+    for (sunindextype k = 0; k < N; k++) { hz[k] = c[0] * hx0[k]; }
+    for (int i = 1; i < nsum; i++)
+    {
+      N_VCopyFromDevice_Vulkan(X[i][j]);
+      const auto hx = HostData(X[i][j]);
+      for (sunindextype k = 0; k < N; k++) { hz[k] += c[i] * hx[k]; }
+    }
+    MarkDeviceNeedsUpdate(Z[j]);
   }
   return SUN_SUCCESS;
 }
@@ -1010,6 +1225,7 @@ SUNErrCode N_VWrmsNormMaskVectorArray_Vulkan(int nvec, N_Vector* X, N_Vector* W,
 // Local reductions
 // ---------------------------------------------------------------------------
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VWSqrSumLocal_Vulkan(N_Vector x, N_Vector w)
 {
   N_VCopyFromDevice_Vulkan(x);
@@ -1021,6 +1237,7 @@ sunrealtype N_VWSqrSumLocal_Vulkan(N_Vector x, N_Vector w)
   return sum;
 }
 
+// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VWSqrSumMaskLocal_Vulkan(N_Vector x, N_Vector w, N_Vector id)
 {
   N_VCopyFromDevice_Vulkan(x);
