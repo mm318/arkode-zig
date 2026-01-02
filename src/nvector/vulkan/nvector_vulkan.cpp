@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -494,8 +495,9 @@ void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
 static const std::string MinQuotientShaderSource()
 {
   const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
-  const char* big = (sizeof(ShaderFloat) == sizeof(double)) ? "1.0e308"
-                                                            : "3.4e38";
+  const std::string big = (sizeof(ShaderFloat) == sizeof(double))
+                            ? std::to_string(DBL_MAX)
+                            : std::to_string(FLT_MAX);
 
   std::string src = fmt::format(R"(
 struct Params {{
@@ -606,61 +608,6 @@ void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID, uint3 dtid : SV
 }}
 )",
                                 real);
-
-  return src;
-}
-
-static const std::string ReduceOrShaderSource()
-{
-  std::string src = R"(
-struct Params {
-    uint n;
-    uint pad0;
-    uint pad1;
-    uint pad2;
-};
-
-[[vk::push_constant]]
-ConstantBuffer<Params> params;
-
-[[vk::binding(0,0)]] RWStructuredBuffer<uint> flags;
-[[vk::binding(1,0)]] RWStructuredBuffer<uint> result;
-
-groupshared uint sdata[LOCAL_SIZE_X];
-
-[numthreads(LOCAL_SIZE_X, 1, 1)]
-void main(uint3 gtid : SV_GroupThreadID)
-{
-    uint tid = gtid.x;
-
-    uint val = 0;
-    if (tid < params.n) {
-        val = flags[tid];
-    }
-    for (uint i = tid + LOCAL_SIZE_X; i < params.n; i += LOCAL_SIZE_X) {
-        val |= flags[i];
-    }
-    sdata[tid] = val;
-    GroupMemoryBarrierWithGroupSync();
-
-    if (LOCAL_SIZE_X >= 512) { if (tid < 256) { sdata[tid] |= sdata[tid + 256]; } GroupMemoryBarrierWithGroupSync(); }
-    if (LOCAL_SIZE_X >= 256) { if (tid < 128) { sdata[tid] |= sdata[tid + 128]; } GroupMemoryBarrierWithGroupSync(); }
-    if (LOCAL_SIZE_X >= 128) { if (tid < 64) { sdata[tid] |= sdata[tid + 64]; } GroupMemoryBarrierWithGroupSync(); }
-
-    if (tid < 32) {
-        if (LOCAL_SIZE_X >= 64) { sdata[tid] |= sdata[tid + 32]; GroupMemoryBarrierWithGroupSync(); }
-        if (LOCAL_SIZE_X >= 32) { sdata[tid] |= sdata[tid + 16]; GroupMemoryBarrierWithGroupSync(); }
-        if (LOCAL_SIZE_X >= 16) { sdata[tid] |= sdata[tid + 8]; GroupMemoryBarrierWithGroupSync(); }
-        if (LOCAL_SIZE_X >= 8) { sdata[tid] |= sdata[tid + 4]; GroupMemoryBarrierWithGroupSync(); }
-        if (LOCAL_SIZE_X >= 4) { sdata[tid] |= sdata[tid + 2]; GroupMemoryBarrierWithGroupSync(); }
-        if (LOCAL_SIZE_X >= 2) { sdata[tid] |= sdata[tid + 1]; }
-    }
-
-    if (tid == 0) {
-        result[0] = sdata[0];
-    }
-}
-)";
 
   return src;
 }
@@ -891,8 +838,9 @@ void main(uint3 gtid : SV_GroupThreadID)
 static const std::string FinalMinReduceShaderSource()
 {
   const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
-  const char* big = (sizeof(ShaderFloat) == sizeof(double)) ? "1.0e308"
-                                                            : "3.4e38";
+  const std::string big = (sizeof(ShaderFloat) == sizeof(double))
+                            ? std::to_string(DBL_MAX)
+                            : std::to_string(FLT_MAX);
 
   std::string src = fmt::format(R"(
 struct Params {{
@@ -1011,6 +959,61 @@ void main(uint3 gtid : SV_GroupThreadID, uint3 dtid : SV_DispatchThreadID)
   return src;
 }
 
+static const std::string FinalOrReduceShaderSource()
+{
+  std::string src = R"(
+struct Params {
+    uint n;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<uint> flags;
+[[vk::binding(1,0)]] RWStructuredBuffer<uint> result;
+
+groupshared uint sdata[LOCAL_SIZE_X];
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 gtid : SV_GroupThreadID)
+{
+    uint tid = gtid.x;
+
+    uint val = 0;
+    if (tid < params.n) {
+        val = flags[tid];
+    }
+    for (uint i = tid + LOCAL_SIZE_X; i < params.n; i += LOCAL_SIZE_X) {
+        val |= flags[i];
+    }
+    sdata[tid] = val;
+    GroupMemoryBarrierWithGroupSync();
+
+    if (LOCAL_SIZE_X >= 512) { if (tid < 256) { sdata[tid] |= sdata[tid + 256]; } GroupMemoryBarrierWithGroupSync(); }
+    if (LOCAL_SIZE_X >= 256) { if (tid < 128) { sdata[tid] |= sdata[tid + 128]; } GroupMemoryBarrierWithGroupSync(); }
+    if (LOCAL_SIZE_X >= 128) { if (tid < 64) { sdata[tid] |= sdata[tid + 64]; } GroupMemoryBarrierWithGroupSync(); }
+
+    if (tid < 32) {
+        if (LOCAL_SIZE_X >= 64) { sdata[tid] |= sdata[tid + 32]; GroupMemoryBarrierWithGroupSync(); }
+        if (LOCAL_SIZE_X >= 32) { sdata[tid] |= sdata[tid + 16]; GroupMemoryBarrierWithGroupSync(); }
+        if (LOCAL_SIZE_X >= 16) { sdata[tid] |= sdata[tid + 8]; GroupMemoryBarrierWithGroupSync(); }
+        if (LOCAL_SIZE_X >= 8) { sdata[tid] |= sdata[tid + 4]; GroupMemoryBarrierWithGroupSync(); }
+        if (LOCAL_SIZE_X >= 4) { sdata[tid] |= sdata[tid + 2]; GroupMemoryBarrierWithGroupSync(); }
+        if (LOCAL_SIZE_X >= 2) { sdata[tid] |= sdata[tid + 1]; }
+    }
+
+    if (tid == 0) {
+        result[0] = sdata[0];
+    }
+}
+)";
+
+  return src;
+}
+
 static std::vector<uint32_t> CompileSlangToSpirv(
   const std::string& source, const std::string& entry,
   const std::array<uint32_t, 3>& localSizes)
@@ -1067,24 +1070,10 @@ static const std::vector<uint32_t>& GetDotProdSpirv()
   return spirv;
 }
 
-static const std::vector<uint32_t>& GetFinalSumReduceSpirv()
-{
-  static std::vector<uint32_t> spirv =
-    CompileSlangToSpirv(FinalSumReduceShaderSource(), "main", kLocalSizes);
-  return spirv;
-}
-
 static const std::vector<uint32_t>& GetMaxNormSpirv()
 {
   static std::vector<uint32_t> spirv =
     CompileSlangToSpirv(MaxNormShaderSource(), "main", {256, 1, 1});
-  return spirv;
-}
-
-static const std::vector<uint32_t>& GetFinalMaxReduceSpirv()
-{
-  static std::vector<uint32_t> spirv =
-    CompileSlangToSpirv(FinalMaxReduceShaderSource(), "main", {256, 1, 1});
   return spirv;
 }
 
@@ -1095,24 +1084,10 @@ static const std::vector<uint32_t>& GetMinQuotientSpirv()
   return spirv;
 }
 
-static const std::vector<uint32_t>& GetFinalMinReduceSpirv()
-{
-  static std::vector<uint32_t> spirv =
-    CompileSlangToSpirv(FinalMinReduceShaderSource(), "main", {256, 1, 1});
-  return spirv;
-}
-
 static const std::vector<uint32_t>& GetInvTestSpirv()
 {
   static std::vector<uint32_t> spirv =
     CompileSlangToSpirv(InvTestShaderSource(), "main", {256, 1, 1});
-  return spirv;
-}
-
-static const std::vector<uint32_t>& GetReduceOrSpirv()
-{
-  static std::vector<uint32_t> spirv =
-    CompileSlangToSpirv(ReduceOrShaderSource(), "main", {256, 1, 1});
   return spirv;
 }
 
@@ -1134,6 +1109,34 @@ static const std::vector<uint32_t>& GetScaleAddSpirv()
 {
   static std::vector<uint32_t> spirv =
     CompileSlangToSpirv(ScaleAddShaderSource(), "main", {256, 1, 1});
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetFinalMaxReduceSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(FinalMaxReduceShaderSource(), "main", {256, 1, 1});
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetFinalMinReduceSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(FinalMinReduceShaderSource(), "main", {256, 1, 1});
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetFinalSumReduceSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(FinalSumReduceShaderSource(), "main", kLocalSizes);
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetFinalOrReduceSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(FinalOrReduceShaderSource(), "main", {256, 1, 1});
   return spirv;
 }
 
@@ -1598,6 +1601,19 @@ static sunrealtype DispatchMinQuotientReduction(N_Vector num, N_Vector denom)
   }
 
   ShaderFloat result = resultTensor->data<ShaderFloat>()[0];
+
+  // If the GPU returned its "big" sentinel value, map it to
+  // SUN_BIG_REAL so the result matches the expected sunrealtype range.
+  // This handles the case where all denominators are zero.
+  if constexpr (sizeof(ShaderFloat) == sizeof(double))
+  {
+    if (result >= DBL_MAX) { return SUN_BIG_REAL; }
+  }
+  else
+  {
+    if (result >= FLT_MAX) { return SUN_BIG_REAL; }
+  }
+
   return static_cast<sunrealtype>(result);
 }
 
@@ -1659,7 +1675,7 @@ static sunbooleantype DispatchInvTest(N_Vector x, N_Vector z)
 
   // Second pass: reduce OR of flags
   {
-    const auto& spirv = GetReduceOrSpirv();
+    const auto& spirv = GetFinalOrReduceSpirv();
 
     std::vector<std::shared_ptr<kp::Memory>> memObjects;
     memObjects.push_back(hasZeroTensor);
@@ -1767,7 +1783,7 @@ static sunbooleantype DispatchConstrMask(N_Vector c, N_Vector x, N_Vector m)
 
   // Second pass: reduce OR of violation flags
   {
-    const auto& spirv = GetReduceOrSpirv();
+    const auto& spirv = GetFinalOrReduceSpirv();
 
     std::vector<std::shared_ptr<kp::Memory>> memObjects;
     memObjects.push_back(hasViolationTensor);
