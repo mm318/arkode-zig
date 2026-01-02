@@ -1132,8 +1132,9 @@ fn build_unit_tests(
                 },
             },
             .run_infos = &.{
-                &.{ "1000", "0" },
-                &.{ "10000", "0" },
+                // TODO: GitHub runner doesn't support vulkan
+                // &.{ "1000", "0" },
+                // &.{ "10000", "0" },
             },
         },
         .{
