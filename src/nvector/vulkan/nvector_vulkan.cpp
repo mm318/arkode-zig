@@ -17,7 +17,6 @@
 #include <iterator>
 #include <memory>
 #include <new>
-#include <numeric>
 #include <span>
 #include <sstream>
 #include <stdexcept>
@@ -355,69 +354,6 @@ void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
   return src;
 }
 
-// Reduction shader: sums partial results from first pass
-static const std::string FinalSumReduceShaderSource()
-{
-  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
-
-  std::string src = fmt::format(R"(
-struct Params {{
-    uint n;        // number of partial sums to reduce
-    uint pad0;
-    uint pad1;
-    uint pad2;
-}};
-
-[[vk::push_constant]]
-ConstantBuffer<Params> params;
-
-[[vk::binding(0,0)]] RWStructuredBuffer<{0}> partialSums;
-[[vk::binding(1,0)]] RWStructuredBuffer<{0}> result;
-
-groupshared {0} sdata[LOCAL_SIZE_X];
-
-[numthreads(LOCAL_SIZE_X, 1, 1)]
-void main(uint3 gtid : SV_GroupThreadID, uint3 dtid : SV_DispatchThreadID)
-{{
-    uint tid = gtid.x;
-
-    // Load partial sums into shared memory
-    {0} sum = ({0})0.0;
-    if (tid < params.n) {{
-        sum = partialSums[tid];
-    }}
-    // Handle case where we have more partial sums than threads
-    for (uint i = tid + LOCAL_SIZE_X; i < params.n; i += LOCAL_SIZE_X) {{
-        sum += partialSums[i];
-    }}
-    sdata[tid] = sum;
-    GroupMemoryBarrierWithGroupSync();
-
-    // Reduction in shared memory
-    if (LOCAL_SIZE_X >= 512) {{ if (tid < 256) {{ sdata[tid] += sdata[tid + 256]; }} GroupMemoryBarrierWithGroupSync(); }}
-    if (LOCAL_SIZE_X >= 256) {{ if (tid < 128) {{ sdata[tid] += sdata[tid + 128]; }} GroupMemoryBarrierWithGroupSync(); }}
-    if (LOCAL_SIZE_X >= 128) {{ if (tid < 64) {{ sdata[tid] += sdata[tid + 64]; }} GroupMemoryBarrierWithGroupSync(); }}
-
-    if (tid < 32) {{
-        if (LOCAL_SIZE_X >= 64) {{ sdata[tid] += sdata[tid + 32]; GroupMemoryBarrierWithGroupSync(); }}
-        if (LOCAL_SIZE_X >= 32) {{ sdata[tid] += sdata[tid + 16]; GroupMemoryBarrierWithGroupSync(); }}
-        if (LOCAL_SIZE_X >= 16) {{ sdata[tid] += sdata[tid + 8]; GroupMemoryBarrierWithGroupSync(); }}
-        if (LOCAL_SIZE_X >= 8) {{ sdata[tid] += sdata[tid + 4]; GroupMemoryBarrierWithGroupSync(); }}
-        if (LOCAL_SIZE_X >= 4) {{ sdata[tid] += sdata[tid + 2]; GroupMemoryBarrierWithGroupSync(); }}
-        if (LOCAL_SIZE_X >= 2) {{ sdata[tid] += sdata[tid + 1]; }}
-    }}
-
-    // Thread 0 writes final result
-    if (tid == 0) {{
-        result[0] = sdata[0];
-    }}
-}}
-)",
-                                real);
-
-  return src;
-}
-
 // MaxNorm reduction shader (computes max(abs(x)))
 static const std::string MaxNormShaderSource()
 {
@@ -484,6 +420,413 @@ void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
   return src;
 }
 
+// Weighted squared sum reduction shader (for WrmsNorm, WL2Norm, WSqrSum)
+static const std::string WSqrSumShaderSource()
+{
+  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+
+  std::string src = fmt::format(R"(
+struct Params {{
+    uint n;
+    uint numGroups;
+    uint useMask;  // 0 = no mask, 1 = use mask
+    uint pad;
+}};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<{0}> X;
+[[vk::binding(1,0)]] RWStructuredBuffer<{0}> W;
+[[vk::binding(2,0)]] RWStructuredBuffer<{0}> ID;  // mask (only used if useMask=1)
+[[vk::binding(3,0)]] RWStructuredBuffer<{0}> partialSums;
+
+groupshared {0} sdata[LOCAL_SIZE_X];
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
+{{
+    uint tid = gtid.x;
+    uint i = gid.x * (LOCAL_SIZE_X * 2) + tid;
+    uint gridSize = LOCAL_SIZE_X * 2 * params.numGroups;
+
+    {0} sum = ({0})0.0;
+    while (i < params.n) {{
+        if (params.useMask == 0 || ID[i] > ({0})0.0) {{
+            {0} v = X[i] * W[i];
+            sum += v * v;
+        }}
+        if (i + LOCAL_SIZE_X < params.n) {{
+            if (params.useMask == 0 || ID[i + LOCAL_SIZE_X] > ({0})0.0) {{
+                {0} v = X[i + LOCAL_SIZE_X] * W[i + LOCAL_SIZE_X];
+                sum += v * v;
+            }}
+        }}
+        i += gridSize;
+    }}
+    sdata[tid] = sum;
+    GroupMemoryBarrierWithGroupSync();
+
+    if (LOCAL_SIZE_X >= 512) {{ if (tid < 256) {{ sdata[tid] += sdata[tid + 256]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 256) {{ if (tid < 128) {{ sdata[tid] += sdata[tid + 128]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 128) {{ if (tid < 64) {{ sdata[tid] += sdata[tid + 64]; }} GroupMemoryBarrierWithGroupSync(); }}
+
+    if (tid < 32) {{
+        if (LOCAL_SIZE_X >= 64) {{ sdata[tid] += sdata[tid + 32]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 32) {{ sdata[tid] += sdata[tid + 16]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 16) {{ sdata[tid] += sdata[tid + 8]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 8) {{ sdata[tid] += sdata[tid + 4]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 4) {{ sdata[tid] += sdata[tid + 2]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 2) {{ sdata[tid] += sdata[tid + 1]; }}
+    }}
+
+    if (tid == 0) {{
+        partialSums[gid.x] = sdata[0];
+    }}
+}}
+)",
+                                real);
+
+  return src;
+}
+
+// Min quotient reduction shader (finds min(num/denom) where denom != 0)
+static const std::string MinQuotientShaderSource()
+{
+  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+  const char* big = (sizeof(ShaderFloat) == sizeof(double)) ? "1.0e308"
+                                                            : "3.4e38";
+
+  std::string src = fmt::format(R"(
+struct Params {{
+    uint n;
+    uint numGroups;
+    uint pad1;
+    uint pad2;
+}};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<{0}> Num;
+[[vk::binding(1,0)]] RWStructuredBuffer<{0}> Denom;
+[[vk::binding(2,0)]] RWStructuredBuffer<{0}> partialMin;
+
+groupshared {0} sdata[LOCAL_SIZE_X];
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
+{{
+    uint tid = gtid.x;
+    uint i = gid.x * (LOCAL_SIZE_X * 2) + tid;
+    uint gridSize = LOCAL_SIZE_X * 2 * params.numGroups;
+
+    {0} minVal = ({0}){1};
+    while (i < params.n) {{
+        if (Denom[i] != ({0})0.0) {{
+            {0} q = Num[i] / Denom[i];
+            if (q < minVal) minVal = q;
+        }}
+        if (i + LOCAL_SIZE_X < params.n && Denom[i + LOCAL_SIZE_X] != ({0})0.0) {{
+            {0} q = Num[i + LOCAL_SIZE_X] / Denom[i + LOCAL_SIZE_X];
+            if (q < minVal) minVal = q;
+        }}
+        i += gridSize;
+    }}
+    sdata[tid] = minVal;
+    GroupMemoryBarrierWithGroupSync();
+
+    if (LOCAL_SIZE_X >= 512) {{ if (tid < 256) {{ if (sdata[tid + 256] < sdata[tid]) sdata[tid] = sdata[tid + 256]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 256) {{ if (tid < 128) {{ if (sdata[tid + 128] < sdata[tid]) sdata[tid] = sdata[tid + 128]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 128) {{ if (tid < 64) {{ if (sdata[tid + 64] < sdata[tid]) sdata[tid] = sdata[tid + 64]; }} GroupMemoryBarrierWithGroupSync(); }}
+
+    if (tid < 32) {{
+        if (LOCAL_SIZE_X >= 64) {{ if (sdata[tid + 32] < sdata[tid]) sdata[tid] = sdata[tid + 32]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 32) {{ if (sdata[tid + 16] < sdata[tid]) sdata[tid] = sdata[tid + 16]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 16) {{ if (sdata[tid + 8] < sdata[tid]) sdata[tid] = sdata[tid + 8]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 8) {{ if (sdata[tid + 4] < sdata[tid]) sdata[tid] = sdata[tid + 4]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 4) {{ if (sdata[tid + 2] < sdata[tid]) sdata[tid] = sdata[tid + 2]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 2) {{ if (sdata[tid + 1] < sdata[tid]) sdata[tid] = sdata[tid + 1]; }}
+    }}
+
+    if (tid == 0) {{
+        partialMin[gid.x] = sdata[0];
+    }}
+}}
+)",
+                                real, big);
+
+  return src;
+}
+
+// InvTest shader (computes z = 1/x, returns flag if any x == 0)
+static const std::string InvTestShaderSource()
+{
+  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+
+  std::string src = fmt::format(R"(
+struct Params {{
+    uint n;
+    uint numGroups;
+    uint pad1;
+    uint pad2;
+}};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<{0}> X;
+[[vk::binding(1,0)]] RWStructuredBuffer<{0}> Z;
+[[vk::binding(2,0)]] RWStructuredBuffer<uint> hasZero;  // per-workgroup flag
+
+groupshared uint sHasZero;
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID, uint3 dtid : SV_DispatchThreadID)
+{{
+    uint tid = gtid.x;
+    uint i = dtid.x;
+
+    if (tid == 0) sHasZero = 0;
+    GroupMemoryBarrierWithGroupSync();
+
+    if (i < params.n) {{
+        if (X[i] == ({0})0.0) {{
+            Z[i] = ({0})0.0;
+            InterlockedOr(sHasZero, 1);
+        }} else {{
+            Z[i] = ({0})1.0 / X[i];
+        }}
+    }}
+    GroupMemoryBarrierWithGroupSync();
+
+    if (tid == 0) {{
+        hasZero[gid.x] = sHasZero;
+    }}
+}}
+)",
+                                real);
+
+  return src;
+}
+
+static const std::string ReduceOrShaderSource()
+{
+  std::string src = R"(
+struct Params {
+    uint n;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<uint> flags;
+[[vk::binding(1,0)]] RWStructuredBuffer<uint> result;
+
+groupshared uint sdata[LOCAL_SIZE_X];
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 gtid : SV_GroupThreadID)
+{
+    uint tid = gtid.x;
+
+    uint val = 0;
+    if (tid < params.n) {
+        val = flags[tid];
+    }
+    for (uint i = tid + LOCAL_SIZE_X; i < params.n; i += LOCAL_SIZE_X) {
+        val |= flags[i];
+    }
+    sdata[tid] = val;
+    GroupMemoryBarrierWithGroupSync();
+
+    if (LOCAL_SIZE_X >= 512) { if (tid < 256) { sdata[tid] |= sdata[tid + 256]; } GroupMemoryBarrierWithGroupSync(); }
+    if (LOCAL_SIZE_X >= 256) { if (tid < 128) { sdata[tid] |= sdata[tid + 128]; } GroupMemoryBarrierWithGroupSync(); }
+    if (LOCAL_SIZE_X >= 128) { if (tid < 64) { sdata[tid] |= sdata[tid + 64]; } GroupMemoryBarrierWithGroupSync(); }
+
+    if (tid < 32) {
+        if (LOCAL_SIZE_X >= 64) { sdata[tid] |= sdata[tid + 32]; GroupMemoryBarrierWithGroupSync(); }
+        if (LOCAL_SIZE_X >= 32) { sdata[tid] |= sdata[tid + 16]; GroupMemoryBarrierWithGroupSync(); }
+        if (LOCAL_SIZE_X >= 16) { sdata[tid] |= sdata[tid + 8]; GroupMemoryBarrierWithGroupSync(); }
+        if (LOCAL_SIZE_X >= 8) { sdata[tid] |= sdata[tid + 4]; GroupMemoryBarrierWithGroupSync(); }
+        if (LOCAL_SIZE_X >= 4) { sdata[tid] |= sdata[tid + 2]; GroupMemoryBarrierWithGroupSync(); }
+        if (LOCAL_SIZE_X >= 2) { sdata[tid] |= sdata[tid + 1]; }
+    }
+
+    if (tid == 0) {
+        result[0] = sdata[0];
+    }
+}
+)";
+
+  return src;
+}
+
+// ConstrMask shader (checks constraints and sets mask)
+static const std::string ConstrMaskShaderSource()
+{
+  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+
+  std::string src = fmt::format(R"(
+struct Params {{
+    uint n;
+    uint numGroups;
+    uint pad1;
+    uint pad2;
+}};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<{0}> C;  // constraints
+[[vk::binding(1,0)]] RWStructuredBuffer<{0}> X;  // values
+[[vk::binding(2,0)]] RWStructuredBuffer<{0}> M;  // mask output
+[[vk::binding(3,0)]] RWStructuredBuffer<uint> hasViolation;
+
+groupshared uint sViolation;
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID, uint3 dtid : SV_DispatchThreadID)
+{{
+    uint tid = gtid.x;
+    uint i = dtid.x;
+
+    if (tid == 0) sViolation = 0;
+    GroupMemoryBarrierWithGroupSync();
+
+    if (i < params.n) {{
+        M[i] = ({0})0.0;
+
+        {0} c = C[i];
+        {0} x = X[i];
+
+        if (c != ({0})0.0) {{
+            {0} absC = abs(c);
+            {0} prod = x * c;
+            // |c| > 1.5 means c = +/-2: strict inequality (x*c must be > 0)
+            // |c| > 0.5 means c = +/-1 or +/-2: non-strict (x*c must be >= 0)
+            bool violated = (absC > ({0})1.5 && prod <= ({0})0.0) ||
+                           (absC > ({0})0.5 && prod < ({0})0.0);
+            if (violated) {{
+                M[i] = ({0})1.0;
+                InterlockedOr(sViolation, 1);
+            }}
+        }}
+    }}
+    GroupMemoryBarrierWithGroupSync();
+
+    if (tid == 0) {{
+        hasViolation[gid.x] = sViolation;
+    }}
+}}
+)",
+                                real);
+
+  return src;
+}
+
+// Linear combination shader (z = sum of c[i] * X[i])
+static const std::string LinearCombShaderSource()
+{
+  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+
+  // This shader handles up to 8 vectors. For more, we call it multiple times.
+  std::string src = fmt::format(R"(
+struct Params {{
+    uint n;
+    uint nvec;
+    uint zIsX0;  // 1 if Z aliases X[0]
+    uint pad;
+    float c0, c1, c2, c3, c4, c5, c6, c7;
+}};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<{0}> X0;
+[[vk::binding(1,0)]] RWStructuredBuffer<{0}> X1;
+[[vk::binding(2,0)]] RWStructuredBuffer<{0}> X2;
+[[vk::binding(3,0)]] RWStructuredBuffer<{0}> X3;
+[[vk::binding(4,0)]] RWStructuredBuffer<{0}> X4;
+[[vk::binding(5,0)]] RWStructuredBuffer<{0}> X5;
+[[vk::binding(6,0)]] RWStructuredBuffer<{0}> X6;
+[[vk::binding(7,0)]] RWStructuredBuffer<{0}> X7;
+[[vk::binding(8,0)]] RWStructuredBuffer<{0}> Z;
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{{
+    uint i = dtid.x;
+    if (i >= params.n) return;
+
+    {0} sum = ({0})0.0;
+
+    // If Z aliases X[0] and c[0] == 1, we're accumulating into Z
+    if (params.zIsX0 == 1) {{
+        sum = Z[i];
+        if (params.nvec > 1) sum += ({0})params.c1 * X1[i];
+        if (params.nvec > 2) sum += ({0})params.c2 * X2[i];
+        if (params.nvec > 3) sum += ({0})params.c3 * X3[i];
+        if (params.nvec > 4) sum += ({0})params.c4 * X4[i];
+        if (params.nvec > 5) sum += ({0})params.c5 * X5[i];
+        if (params.nvec > 6) sum += ({0})params.c6 * X6[i];
+        if (params.nvec > 7) sum += ({0})params.c7 * X7[i];
+    }} else {{
+        sum = ({0})params.c0 * X0[i];
+        if (params.nvec > 1) sum += ({0})params.c1 * X1[i];
+        if (params.nvec > 2) sum += ({0})params.c2 * X2[i];
+        if (params.nvec > 3) sum += ({0})params.c3 * X3[i];
+        if (params.nvec > 4) sum += ({0})params.c4 * X4[i];
+        if (params.nvec > 5) sum += ({0})params.c5 * X5[i];
+        if (params.nvec > 6) sum += ({0})params.c6 * X6[i];
+        if (params.nvec > 7) sum += ({0})params.c7 * X7[i];
+    }}
+
+    Z[i] = sum;
+}}
+)",
+                                real);
+
+  return src;
+}
+
+// ScaleAddMulti shader (Z[j] = c[j] * X + Y[j])
+static const std::string ScaleAddShaderSource()
+{
+  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+
+  std::string src = fmt::format(R"(
+struct Params {{
+    uint n;
+    float c;
+    uint pad1;
+    uint pad2;
+}};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<{0}> X;
+[[vk::binding(1,0)]] RWStructuredBuffer<{0}> Y;
+[[vk::binding(2,0)]] RWStructuredBuffer<{0}> Z;
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{{
+    uint i = dtid.x;
+    if (i >= params.n) return;
+
+    Z[i] = ({0})params.c * X[i] + Y[i];
+}}
+)",
+                                real);
+
+  return src;
+}
+
 // Final max reduction shader: finds max of partial results
 static const std::string FinalMaxReduceShaderSource()
 {
@@ -535,6 +878,129 @@ void main(uint3 gtid : SV_GroupThreadID)
         if (LOCAL_SIZE_X >= 2) {{ if (sdata[tid + 1] > sdata[tid]) sdata[tid] = sdata[tid + 1]; }}
     }}
 
+    if (tid == 0) {{
+        result[0] = sdata[0];
+    }}
+}}
+)",
+                                real);
+
+  return src;
+}
+
+static const std::string FinalMinReduceShaderSource()
+{
+  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+  const char* big = (sizeof(ShaderFloat) == sizeof(double)) ? "1.0e308"
+                                                            : "3.4e38";
+
+  std::string src = fmt::format(R"(
+struct Params {{
+    uint n;
+    uint pad0;
+    uint pad1;
+    uint pad2;
+}};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<{0}> partialMin;
+[[vk::binding(1,0)]] RWStructuredBuffer<{0}> result;
+
+groupshared {0} sdata[LOCAL_SIZE_X];
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 gtid : SV_GroupThreadID)
+{{
+    uint tid = gtid.x;
+
+    {0} minVal = ({0}){1};
+    if (tid < params.n) {{
+        minVal = partialMin[tid];
+    }}
+    for (uint i = tid + LOCAL_SIZE_X; i < params.n; i += LOCAL_SIZE_X) {{
+        if (partialMin[i] < minVal) minVal = partialMin[i];
+    }}
+    sdata[tid] = minVal;
+    GroupMemoryBarrierWithGroupSync();
+
+    if (LOCAL_SIZE_X >= 512) {{ if (tid < 256) {{ if (sdata[tid + 256] < sdata[tid]) sdata[tid] = sdata[tid + 256]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 256) {{ if (tid < 128) {{ if (sdata[tid + 128] < sdata[tid]) sdata[tid] = sdata[tid + 128]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 128) {{ if (tid < 64) {{ if (sdata[tid + 64] < sdata[tid]) sdata[tid] = sdata[tid + 64]; }} GroupMemoryBarrierWithGroupSync(); }}
+
+    if (tid < 32) {{
+        if (LOCAL_SIZE_X >= 64) {{ if (sdata[tid + 32] < sdata[tid]) sdata[tid] = sdata[tid + 32]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 32) {{ if (sdata[tid + 16] < sdata[tid]) sdata[tid] = sdata[tid + 16]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 16) {{ if (sdata[tid + 8] < sdata[tid]) sdata[tid] = sdata[tid + 8]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 8) {{ if (sdata[tid + 4] < sdata[tid]) sdata[tid] = sdata[tid + 4]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 4) {{ if (sdata[tid + 2] < sdata[tid]) sdata[tid] = sdata[tid + 2]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 2) {{ if (sdata[tid + 1] < sdata[tid]) sdata[tid] = sdata[tid + 1]; }}
+    }}
+
+    if (tid == 0) {{
+        result[0] = sdata[0];
+    }}
+}}
+)",
+                                real, big);
+
+  return src;
+}
+
+// Reduction shader: sums partial results from first pass
+static const std::string FinalSumReduceShaderSource()
+{
+  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+
+  std::string src = fmt::format(R"(
+struct Params {{
+    uint n;        // number of partial sums to reduce
+    uint pad0;
+    uint pad1;
+    uint pad2;
+}};
+
+[[vk::push_constant]]
+ConstantBuffer<Params> params;
+
+[[vk::binding(0,0)]] RWStructuredBuffer<{0}> partialSums;
+[[vk::binding(1,0)]] RWStructuredBuffer<{0}> result;
+
+groupshared {0} sdata[LOCAL_SIZE_X];
+
+[numthreads(LOCAL_SIZE_X, 1, 1)]
+void main(uint3 gtid : SV_GroupThreadID, uint3 dtid : SV_DispatchThreadID)
+{{
+    uint tid = gtid.x;
+
+    // Load partial sums into shared memory
+    {0} sum = ({0})0.0;
+    if (tid < params.n) {{
+        sum = partialSums[tid];
+    }}
+    // Handle case where we have more partial sums than threads
+    for (uint i = tid + LOCAL_SIZE_X; i < params.n; i += LOCAL_SIZE_X) {{
+        sum += partialSums[i];
+    }}
+    sdata[tid] = sum;
+    GroupMemoryBarrierWithGroupSync();
+
+    // Reduction in shared memory
+    if (LOCAL_SIZE_X >= 512) {{ if (tid < 256) {{ sdata[tid] += sdata[tid + 256]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 256) {{ if (tid < 128) {{ sdata[tid] += sdata[tid + 128]; }} GroupMemoryBarrierWithGroupSync(); }}
+    if (LOCAL_SIZE_X >= 128) {{ if (tid < 64) {{ sdata[tid] += sdata[tid + 64]; }} GroupMemoryBarrierWithGroupSync(); }}
+
+    if (tid < 32) {{
+        if (LOCAL_SIZE_X >= 64) {{ sdata[tid] += sdata[tid + 32]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 32) {{ sdata[tid] += sdata[tid + 16]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 16) {{ sdata[tid] += sdata[tid + 8]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 8) {{ sdata[tid] += sdata[tid + 4]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 4) {{ sdata[tid] += sdata[tid + 2]; GroupMemoryBarrierWithGroupSync(); }}
+        if (LOCAL_SIZE_X >= 2) {{ sdata[tid] += sdata[tid + 1]; }}
+    }}
+
+    // Thread 0 writes final result
     if (tid == 0) {{
         result[0] = sdata[0];
     }}
@@ -619,6 +1085,55 @@ static const std::vector<uint32_t>& GetFinalMaxReduceSpirv()
 {
   static std::vector<uint32_t> spirv =
     CompileSlangToSpirv(FinalMaxReduceShaderSource(), "main", {256, 1, 1});
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetMinQuotientSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(MinQuotientShaderSource(), "main", {256, 1, 1});
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetFinalMinReduceSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(FinalMinReduceShaderSource(), "main", {256, 1, 1});
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetInvTestSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(InvTestShaderSource(), "main", {256, 1, 1});
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetReduceOrSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(ReduceOrShaderSource(), "main", {256, 1, 1});
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetWSqrSumSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(WSqrSumShaderSource(), "main", {256, 1, 1});
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetConstrMaskSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(ConstrMaskShaderSource(), "main", {256, 1, 1});
+  return spirv;
+}
+
+static const std::vector<uint32_t>& GetScaleAddSpirv()
+{
+  static std::vector<uint32_t> spirv =
+    CompileSlangToSpirv(ScaleAddShaderSource(), "main", {256, 1, 1});
   return spirv;
 }
 
@@ -889,6 +1404,468 @@ static sunrealtype DispatchMaxNormReduction(N_Vector x)
   // Read result back
   ShaderFloat result = resultTensor->data<ShaderFloat>()[0];
   return static_cast<sunrealtype>(result);
+}
+
+// GPU-accelerated weighted squared sum (used by WrmsNorm, WL2Norm, WSqrSum)
+static sunrealtype DispatchWSqrSumReduction(N_Vector x, N_Vector w, N_Vector id,
+                                            bool useMask)
+{
+  auto* privX = NVEC_VULKAN_PRIVATE(x);
+  auto* privW = NVEC_VULKAN_PRIVATE(w);
+
+  N_VCopyToDevice_Vulkan(x);
+  N_VCopyToDevice_Vulkan(w);
+  if (useMask) { N_VCopyToDevice_Vulkan(id); }
+
+  const uint32_t n = static_cast<uint32_t>(NVEC_VULKAN_LENGTH(x));
+
+  auto* reduce_policy      = NVEC_VULKAN_CONTENT(x)->reduce_exec_policy;
+  const uint32_t blockSize = reduce_policy->blockSize(n);
+  const uint32_t numGroups = reduce_policy->gridSize(n);
+
+  assert(blockSize == kLocalSizes[0] &&
+         "reduce_exec_policy blockSize must match shader LOCAL_SIZE_X");
+
+  auto partialSumsTensor =
+    privX->manager->tensor(nullptr, numGroups, sizeof(ShaderFloat),
+                           kp::Memory::dataType<ShaderFloat>(),
+                           kp::Memory::MemoryTypes::eDevice);
+
+  auto resultTensor = privX->manager->tensor(nullptr, 1, sizeof(ShaderFloat),
+                                             kp::Memory::dataType<ShaderFloat>(),
+                                             kp::Memory::MemoryTypes::eDevice);
+
+  // First pass
+  {
+    const auto& spirv = GetWSqrSumSpirv();
+
+    std::vector<std::shared_ptr<kp::Memory>> memObjects;
+    memObjects.push_back(privX->device_data);
+    memObjects.push_back(privW->device_data);
+    // For mask: use id if provided, otherwise reuse X (shader ignores it when useMask=0)
+    if (useMask) { memObjects.push_back(NVEC_VULKAN_PRIVATE(id)->device_data); }
+    else { memObjects.push_back(privX->device_data); }
+    memObjects.push_back(partialSumsTensor);
+
+    struct Push
+    {
+      uint32_t n;
+      uint32_t numGroups;
+      uint32_t useMask;
+      uint32_t pad;
+    };
+
+    Push push{n, numGroups, useMask ? 1u : 0u, 0};
+
+    std::vector<uint8_t> pushConstants(sizeof(Push));
+    std::memcpy(pushConstants.data(), &push, sizeof(Push));
+
+    auto seq = privX->manager->sequence();
+    seq->record<kp::OpSyncDevice>(memObjects);
+
+    auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
+                                          std::vector<uint32_t>{}, pushConstants);
+
+    seq->record<kp::OpAlgoDispatch>(algo);
+    seq->eval();
+  }
+
+  // Second pass
+  {
+    const auto& spirv = GetFinalSumReduceSpirv();
+
+    std::vector<std::shared_ptr<kp::Memory>> memObjects;
+    memObjects.push_back(partialSumsTensor);
+    memObjects.push_back(resultTensor);
+
+    struct Push
+    {
+      uint32_t n;
+      uint32_t pad0;
+      uint32_t pad1;
+      uint32_t pad2;
+    };
+
+    Push push{numGroups, 0, 0, 0};
+
+    std::vector<uint8_t> pushConstants(sizeof(Push));
+    std::memcpy(pushConstants.data(), &push, sizeof(Push));
+
+    auto seq = privX->manager->sequence();
+
+    auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
+                                          std::vector<uint32_t>{}, pushConstants);
+
+    seq->record<kp::OpAlgoDispatch>(algo);
+    seq->record<kp::OpSyncLocal>(
+      {std::static_pointer_cast<kp::Memory>(resultTensor)});
+    seq->eval();
+  }
+
+  ShaderFloat result = resultTensor->data<ShaderFloat>()[0];
+  return static_cast<sunrealtype>(result);
+}
+
+// GPU-accelerated min quotient reduction
+static sunrealtype DispatchMinQuotientReduction(N_Vector num, N_Vector denom)
+{
+  auto* privN = NVEC_VULKAN_PRIVATE(num);
+  auto* privD = NVEC_VULKAN_PRIVATE(denom);
+
+  N_VCopyToDevice_Vulkan(num);
+  N_VCopyToDevice_Vulkan(denom);
+
+  const uint32_t n = static_cast<uint32_t>(NVEC_VULKAN_LENGTH(num));
+
+  auto* reduce_policy      = NVEC_VULKAN_CONTENT(num)->reduce_exec_policy;
+  const uint32_t blockSize = reduce_policy->blockSize(n);
+  const uint32_t numGroups = reduce_policy->gridSize(n);
+
+  assert(blockSize == kLocalSizes[0] &&
+         "reduce_exec_policy blockSize must match shader LOCAL_SIZE_X");
+
+  auto partialMinTensor =
+    privN->manager->tensor(nullptr, numGroups, sizeof(ShaderFloat),
+                           kp::Memory::dataType<ShaderFloat>(),
+                           kp::Memory::MemoryTypes::eDevice);
+
+  auto resultTensor = privN->manager->tensor(nullptr, 1, sizeof(ShaderFloat),
+                                             kp::Memory::dataType<ShaderFloat>(),
+                                             kp::Memory::MemoryTypes::eDevice);
+
+  // First pass
+  {
+    const auto& spirv = GetMinQuotientSpirv();
+
+    std::vector<std::shared_ptr<kp::Memory>> memObjects;
+    memObjects.push_back(privN->device_data);
+    memObjects.push_back(privD->device_data);
+    memObjects.push_back(partialMinTensor);
+
+    struct Push
+    {
+      uint32_t n;
+      uint32_t numGroups;
+      uint32_t pad1;
+      uint32_t pad2;
+    };
+
+    Push push{n, numGroups, 0, 0};
+
+    std::vector<uint8_t> pushConstants(sizeof(Push));
+    std::memcpy(pushConstants.data(), &push, sizeof(Push));
+
+    auto seq = privN->manager->sequence();
+    seq->record<kp::OpSyncDevice>(memObjects);
+
+    auto algo = privN->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
+                                          std::vector<uint32_t>{}, pushConstants);
+
+    seq->record<kp::OpAlgoDispatch>(algo);
+    seq->eval();
+  }
+
+  // Second pass
+  {
+    const auto& spirv = GetFinalMinReduceSpirv();
+
+    std::vector<std::shared_ptr<kp::Memory>> memObjects;
+    memObjects.push_back(partialMinTensor);
+    memObjects.push_back(resultTensor);
+
+    struct Push
+    {
+      uint32_t n;
+      uint32_t pad0;
+      uint32_t pad1;
+      uint32_t pad2;
+    };
+
+    Push push{numGroups, 0, 0, 0};
+
+    std::vector<uint8_t> pushConstants(sizeof(Push));
+    std::memcpy(pushConstants.data(), &push, sizeof(Push));
+
+    auto seq = privN->manager->sequence();
+
+    auto algo = privN->manager->algorithm(memObjects, spirv, {1, 1, 1},
+                                          std::vector<uint32_t>{}, pushConstants);
+
+    seq->record<kp::OpAlgoDispatch>(algo);
+    seq->record<kp::OpSyncLocal>(
+      {std::static_pointer_cast<kp::Memory>(resultTensor)});
+    seq->eval();
+  }
+
+  ShaderFloat result = resultTensor->data<ShaderFloat>()[0];
+  return static_cast<sunrealtype>(result);
+}
+
+// GPU-accelerated inverse test (z = 1/x, returns false if any x == 0)
+static sunbooleantype DispatchInvTest(N_Vector x, N_Vector z)
+{
+  auto* privX = NVEC_VULKAN_PRIVATE(x);
+  auto* privZ = NVEC_VULKAN_PRIVATE(z);
+
+  N_VCopyToDevice_Vulkan(x);
+  EnsureTensor(z);
+
+  const uint32_t n = static_cast<uint32_t>(NVEC_VULKAN_LENGTH(x));
+
+  auto* stream_policy      = NVEC_VULKAN_CONTENT(x)->stream_exec_policy;
+  const uint32_t numGroups = stream_policy->gridSize(n);
+
+  // Tensor for per-workgroup zero flags
+  auto hasZeroTensor = privX->manager->tensor(nullptr, numGroups,
+                                              sizeof(uint32_t),
+                                              kp::Memory::dataType<uint32_t>(),
+                                              kp::Memory::MemoryTypes::eDevice);
+
+  auto resultTensor = privX->manager->tensor(nullptr, 1, sizeof(uint32_t),
+                                             kp::Memory::dataType<uint32_t>(),
+                                             kp::Memory::MemoryTypes::eDevice);
+
+  // First pass: compute inverses and flag zeros
+  {
+    const auto& spirv = GetInvTestSpirv();
+
+    std::vector<std::shared_ptr<kp::Memory>> memObjects;
+    memObjects.push_back(privX->device_data);
+    memObjects.push_back(privZ->device_data);
+    memObjects.push_back(hasZeroTensor);
+
+    struct Push
+    {
+      uint32_t n;
+      uint32_t numGroups;
+      uint32_t pad1;
+      uint32_t pad2;
+    };
+
+    Push push{n, numGroups, 0, 0};
+
+    std::vector<uint8_t> pushConstants(sizeof(Push));
+    std::memcpy(pushConstants.data(), &push, sizeof(Push));
+
+    auto seq = privX->manager->sequence();
+    seq->record<kp::OpSyncDevice>(memObjects);
+
+    auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
+                                          std::vector<uint32_t>{}, pushConstants);
+
+    seq->record<kp::OpAlgoDispatch>(algo);
+    seq->eval();
+  }
+
+  // Second pass: reduce OR of flags
+  {
+    const auto& spirv = GetReduceOrSpirv();
+
+    std::vector<std::shared_ptr<kp::Memory>> memObjects;
+    memObjects.push_back(hasZeroTensor);
+    memObjects.push_back(resultTensor);
+
+    struct Push
+    {
+      uint32_t n;
+      uint32_t pad0;
+      uint32_t pad1;
+      uint32_t pad2;
+    };
+
+    Push push{numGroups, 0, 0, 0};
+
+    std::vector<uint8_t> pushConstants(sizeof(Push));
+    std::memcpy(pushConstants.data(), &push, sizeof(Push));
+
+    auto seq = privX->manager->sequence();
+
+    auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
+                                          std::vector<uint32_t>{}, pushConstants);
+
+    seq->record<kp::OpAlgoDispatch>(algo);
+    seq->record<kp::OpSyncLocal>(
+      {std::static_pointer_cast<kp::Memory>(resultTensor)});
+    seq->eval();
+  }
+
+  // Sync Z back to host
+  {
+    auto seq = privZ->manager->sequence();
+    seq->record<kp::OpSyncLocal>(
+      {std::static_pointer_cast<kp::Memory>(privZ->device_data)});
+    seq->eval();
+
+    ShaderFloat* from_shader = privZ->device_data->data<ShaderFloat>();
+    FromShaderBuffer<ShaderFloat>({from_shader, privZ->device_data->size()},
+                                  HostData(z));
+    privZ->device_needs_update = false;
+    privZ->host_needs_update   = false;
+  }
+
+  uint32_t hasZero = resultTensor->data<uint32_t>()[0];
+  return hasZero ? SUNFALSE : SUNTRUE;
+}
+
+// GPU-accelerated constraint mask check
+static sunbooleantype DispatchConstrMask(N_Vector c, N_Vector x, N_Vector m)
+{
+  auto* privC = NVEC_VULKAN_PRIVATE(c);
+  auto* privX = NVEC_VULKAN_PRIVATE(x);
+  auto* privM = NVEC_VULKAN_PRIVATE(m);
+
+  N_VCopyToDevice_Vulkan(c);
+  N_VCopyToDevice_Vulkan(x);
+  EnsureTensor(m);
+
+  const uint32_t n = static_cast<uint32_t>(NVEC_VULKAN_LENGTH(x));
+
+  auto* stream_policy      = NVEC_VULKAN_CONTENT(x)->stream_exec_policy;
+  const uint32_t numGroups = stream_policy->gridSize(n);
+
+  auto hasViolationTensor =
+    privX->manager->tensor(nullptr, numGroups, sizeof(uint32_t),
+                           kp::Memory::dataType<uint32_t>(),
+                           kp::Memory::MemoryTypes::eDevice);
+
+  auto resultTensor = privX->manager->tensor(nullptr, 1, sizeof(uint32_t),
+                                             kp::Memory::dataType<uint32_t>(),
+                                             kp::Memory::MemoryTypes::eDevice);
+
+  // First pass: check constraints and set mask
+  {
+    const auto& spirv = GetConstrMaskSpirv();
+
+    std::vector<std::shared_ptr<kp::Memory>> memObjects;
+    memObjects.push_back(privC->device_data);
+    memObjects.push_back(privX->device_data);
+    memObjects.push_back(privM->device_data);
+    memObjects.push_back(hasViolationTensor);
+
+    struct Push
+    {
+      uint32_t n;
+      uint32_t numGroups;
+      uint32_t pad1;
+      uint32_t pad2;
+    };
+
+    Push push{n, numGroups, 0, 0};
+
+    std::vector<uint8_t> pushConstants(sizeof(Push));
+    std::memcpy(pushConstants.data(), &push, sizeof(Push));
+
+    auto seq = privX->manager->sequence();
+    seq->record<kp::OpSyncDevice>(memObjects);
+
+    auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
+                                          std::vector<uint32_t>{}, pushConstants);
+
+    seq->record<kp::OpAlgoDispatch>(algo);
+    seq->eval();
+  }
+
+  // Second pass: reduce OR of violation flags
+  {
+    const auto& spirv = GetReduceOrSpirv();
+
+    std::vector<std::shared_ptr<kp::Memory>> memObjects;
+    memObjects.push_back(hasViolationTensor);
+    memObjects.push_back(resultTensor);
+
+    struct Push
+    {
+      uint32_t n;
+      uint32_t pad0;
+      uint32_t pad1;
+      uint32_t pad2;
+    };
+
+    Push push{numGroups, 0, 0, 0};
+
+    std::vector<uint8_t> pushConstants(sizeof(Push));
+    std::memcpy(pushConstants.data(), &push, sizeof(Push));
+
+    auto seq = privX->manager->sequence();
+
+    auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
+                                          std::vector<uint32_t>{}, pushConstants);
+
+    seq->record<kp::OpAlgoDispatch>(algo);
+    seq->record<kp::OpSyncLocal>(
+      {std::static_pointer_cast<kp::Memory>(resultTensor)});
+    seq->eval();
+  }
+
+  // Sync M back to host
+  {
+    auto seq = privM->manager->sequence();
+    seq->record<kp::OpSyncLocal>(
+      {std::static_pointer_cast<kp::Memory>(privM->device_data)});
+    seq->eval();
+
+    ShaderFloat* from_shader = privM->device_data->data<ShaderFloat>();
+    FromShaderBuffer<ShaderFloat>({from_shader, privM->device_data->size()},
+                                  HostData(m));
+    privM->device_needs_update = false;
+    privM->host_needs_update   = false;
+  }
+
+  uint32_t hasViolation = resultTensor->data<uint32_t>()[0];
+  return hasViolation ? SUNFALSE : SUNTRUE;
+}
+
+// GPU-accelerated scale-add (Z = c * X + Y)
+static void DispatchScaleAdd(sunrealtype c, N_Vector x, N_Vector y, N_Vector z)
+{
+  auto* privX = NVEC_VULKAN_PRIVATE(x);
+  auto* privY = NVEC_VULKAN_PRIVATE(y);
+  auto* privZ = NVEC_VULKAN_PRIVATE(z);
+
+  N_VCopyToDevice_Vulkan(x);
+  N_VCopyToDevice_Vulkan(y);
+  EnsureTensor(z);
+
+  const uint32_t n = static_cast<uint32_t>(NVEC_VULKAN_LENGTH(x));
+
+  const auto& spirv        = GetScaleAddSpirv();
+  auto* stream_policy      = NVEC_VULKAN_CONTENT(x)->stream_exec_policy;
+  const uint32_t numGroups = stream_policy->gridSize(n);
+
+  std::vector<std::shared_ptr<kp::Memory>> memObjects;
+  memObjects.push_back(privX->device_data);
+  memObjects.push_back(privY->device_data);
+  memObjects.push_back(privZ->device_data);
+
+  struct Push
+  {
+    uint32_t n;
+    float c;
+    uint32_t pad1;
+    uint32_t pad2;
+  };
+
+  Push push{n, static_cast<float>(c), 0, 0};
+
+  std::vector<uint8_t> pushConstants(sizeof(Push));
+  std::memcpy(pushConstants.data(), &push, sizeof(Push));
+
+  auto seq = privZ->manager->sequence();
+  seq->record<kp::OpSyncDevice>(memObjects);
+
+  auto algo = privZ->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
+                                        std::vector<uint32_t>{}, pushConstants);
+
+  seq->record<kp::OpAlgoDispatch>(algo);
+  seq->record<kp::OpSyncLocal>(
+    {std::static_pointer_cast<kp::Memory>(privZ->device_data)});
+  seq->eval();
+
+  ShaderFloat* from_shader = privZ->device_data->data<ShaderFloat>();
+  FromShaderBuffer<ShaderFloat>({from_shader, privZ->device_data->size()},
+                                HostData(z));
+  privZ->device_needs_update = false;
+  privZ->host_needs_update   = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1217,46 +2194,20 @@ sunrealtype N_VDotProd_Vulkan(N_Vector x, N_Vector y)
   return DispatchDotProdReduction(x, y);
 }
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VMaxNorm_Vulkan(N_Vector x)
 {
   return DispatchMaxNormReduction(x);
 }
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VWrmsNorm_Vulkan(N_Vector x, N_Vector w)
 {
-  N_VCopyFromDevice_Vulkan(x);
-  N_VCopyFromDevice_Vulkan(w);
-  const auto hx   = HostData(x);
-  const auto hw   = HostData(w);
-  sunrealtype sum = ZERO;
-  for (size_t i = 0; i < hx.size(); ++i)
-  {
-    sunrealtype v = hx[i] * hw[i];
-    sum += v * v;
-  }
-  return std::sqrt(sum / hx.size());
+  sunrealtype sum = DispatchWSqrSumReduction(x, w, nullptr, false);
+  return std::sqrt(sum / NVEC_VULKAN_LENGTH(x));
 }
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VWrmsNormMask_Vulkan(N_Vector x, N_Vector w, N_Vector id)
 {
-  N_VCopyFromDevice_Vulkan(x);
-  N_VCopyFromDevice_Vulkan(w);
-  N_VCopyFromDevice_Vulkan(id);
-  const auto hx   = HostData(x);
-  const auto hw   = HostData(w);
-  const auto hid  = HostData(id);
-  sunrealtype sum = ZERO;
-  for (size_t i = 0; i < hx.size(); ++i)
-  {
-    if (hid[i] > ZERO)
-    {
-      sunrealtype v = hx[i] * hw[i];
-      sum += v * v;
-    }
-  }
+  sunrealtype sum = DispatchWSqrSumReduction(x, w, id, true);
   return std::sqrt(sum / NVEC_VULKAN_LENGTH(x));
 }
 
@@ -1267,15 +2218,9 @@ sunrealtype N_VMin_Vulkan(N_Vector x)
   return *std::min_element(hx.begin(), hx.end());
 }
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VWL2Norm_Vulkan(N_Vector x, N_Vector w)
 {
-  N_VCopyFromDevice_Vulkan(x);
-  N_VCopyFromDevice_Vulkan(w);
-  const auto hx   = HostData(x);
-  const auto hw   = HostData(w);
-  sunrealtype sum = ZERO;
-  for (size_t i = 0; i < hx.size(); ++i) sum += hx[i] * hx[i] * hw[i] * hw[i];
+  sunrealtype sum = DispatchWSqrSumReduction(x, w, nullptr, false);
   return std::sqrt(sum);
 }
 
@@ -1293,86 +2238,27 @@ void N_VCompare_Vulkan(sunrealtype c, N_Vector x, N_Vector z)
   DispatchElementwise(ElementwiseOp::Compare, c, 0.0, x, nullptr, z);
 }
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunbooleantype N_VInvTest_Vulkan(N_Vector x, N_Vector z)
 {
-  N_VCopyFromDevice_Vulkan(x);
   EnsureHostDataLength(z, NVEC_VULKAN_LENGTH(x));
-  const auto hx         = HostData(x);
-  auto hz               = HostData(z);
-  sunbooleantype result = SUNTRUE;
-  for (size_t i = 0; i < hx.size(); ++i)
-  {
-    if (hx[i] == ZERO)
-    {
-      hz[i]  = ZERO;
-      result = SUNFALSE;
-    }
-    else { hz[i] = ONE / hx[i]; }
-  }
-  MarkDeviceNeedsUpdate(z);
-
-  return result;
+  return DispatchInvTest(x, z);
 }
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunbooleantype N_VConstrMask_Vulkan(N_Vector c, N_Vector x, N_Vector m)
 {
-  N_VCopyFromDevice_Vulkan(c);
-  N_VCopyFromDevice_Vulkan(x);
   EnsureHostDataLength(m, NVEC_VULKAN_LENGTH(x));
-  auto hm       = HostData(m);
-  const auto hc = HostData(c);
-  const auto hx = HostData(x);
-
-  sunrealtype temp = ZERO;
-  for (size_t i = 0; i < hx.size(); ++i)
-  {
-    hm[i] = ZERO;
-
-    // Continue if no constraints were set for the variable
-    if (hc[i] == ZERO) { continue; }
-
-    // Check if a set constraint has been violated
-    // |c| > 1.5 means c = ±2: strict inequality (x*c must be > 0)
-    // |c| > 0.5 means c = ±1 or ±2: non-strict inequality (x*c must be >= 0)
-    sunbooleantype violated = (std::abs(hc[i]) > ONEPT5 && hx[i] * hc[i] <= ZERO) ||
-                              (std::abs(hc[i]) > HALF && hx[i] * hc[i] < ZERO);
-    if (violated) { temp = hm[i] = ONE; }
-  }
-  MarkDeviceNeedsUpdate(m);
-
-  // Return false if any constraint was violated
-  return (temp == ONE) ? SUNFALSE : SUNTRUE;
+  return DispatchConstrMask(c, x, m);
 }
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VMinQuotient_Vulkan(N_Vector num, N_Vector denom)
 {
-  N_VCopyFromDevice_Vulkan(num);
-  N_VCopyFromDevice_Vulkan(denom);
-  const auto hn        = HostData(num);
-  const auto hd        = HostData(denom);
-  sunbooleantype found = SUNFALSE;
-  sunrealtype min      = SUN_BIG_REAL;
-  for (size_t i = 0; i < hn.size(); ++i)
-  {
-    if (hd[i] == ZERO) { continue; }
-    if (!found)
-    {
-      min   = hn[i] / hd[i];
-      found = SUNTRUE;
-    }
-    else { min = std::min(min, hn[i] / hd[i]); }
-  }
-  return min;
+  return DispatchMinQuotientReduction(num, denom);
 }
 
 // ---------------------------------------------------------------------------
 // Fused ops
 // ---------------------------------------------------------------------------
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 SUNErrCode N_VLinearCombination_Vulkan(int nvec, sunrealtype* c, N_Vector* X,
                                        N_Vector Z)
 {
@@ -1392,84 +2278,37 @@ SUNErrCode N_VLinearCombination_Vulkan(int nvec, sunrealtype* c, N_Vector* X,
     return SUN_SUCCESS;
   }
 
-  sunindextype N = NVEC_VULKAN_LENGTH(Z);
-  EnsureHostDataLength(Z, N);
-  auto hz = HostData(Z);
+  // For nvec > 2, use GPU-accelerated pairwise linear sums
+  // Z = c[0]*X[0] + c[1]*X[1]
+  N_VLinearSum_Vulkan(c[0], X[0], c[1], X[1], Z);
 
-  // X[0] += c[i]*X[i], i = 1,...,nvec-1
-  if ((X[0] == Z) && (c[0] == ONE))
-  {
-    N_VCopyFromDevice_Vulkan(Z);
-    for (int j = 1; j < nvec; j++)
-    {
-      N_VCopyFromDevice_Vulkan(X[j]);
-      const auto hx = HostData(X[j]);
-      for (sunindextype i = 0; i < N; ++i) { hz[i] += c[j] * hx[i]; }
-    }
-    MarkDeviceNeedsUpdate(Z);
-    return SUN_SUCCESS;
-  }
-
-  // X[0] = c[0] * X[0] + sum{ c[i] * X[i] }, i = 1,...,nvec-1
-  if (X[0] == Z)
-  {
-    N_VCopyFromDevice_Vulkan(Z);
-    for (sunindextype i = 0; i < N; ++i) { hz[i] *= c[0]; }
-    for (int j = 1; j < nvec; j++)
-    {
-      N_VCopyFromDevice_Vulkan(X[j]);
-      const auto hx = HostData(X[j]);
-      for (sunindextype i = 0; i < N; ++i) { hz[i] += c[j] * hx[i]; }
-    }
-    MarkDeviceNeedsUpdate(Z);
-    return SUN_SUCCESS;
-  }
-
-  // z = sum{ c[i] * X[i] }, i = 0,...,nvec-1
-  N_VCopyFromDevice_Vulkan(X[0]);
-  const auto hx0 = HostData(X[0]);
-  for (sunindextype i = 0; i < N; ++i) { hz[i] = c[0] * hx0[i]; }
-  for (int j = 1; j < nvec; j++)
-  {
-    N_VCopyFromDevice_Vulkan(X[j]);
-    const auto hx = HostData(X[j]);
-    for (sunindextype i = 0; i < N; ++i) { hz[i] += c[j] * hx[i]; }
-  }
-  MarkDeviceNeedsUpdate(Z);
+  // Z += c[j]*X[j] for j = 2, ..., nvec-1
+  for (int j = 2; j < nvec; j++) { N_VLinearSum_Vulkan(ONE, Z, c[j], X[j], Z); }
 
   return SUN_SUCCESS;
 }
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 SUNErrCode N_VScaleAddMulti_Vulkan(int nvec, sunrealtype* c, N_Vector X,
                                    N_Vector* Y, N_Vector* Z)
 {
   if (nvec <= 0) { return SUN_ERR_ARG_OUTOFRANGE; }
-  N_VCopyFromDevice_Vulkan(X);
-  const auto hx = HostData(X);
+
+  // Use GPU-accelerated scale-add for each vector pair
   for (int j = 0; j < nvec; j++)
   {
-    N_VCopyFromDevice_Vulkan(Y[j]);
-    EnsureHostDataLength(Z[j], static_cast<sunindextype>(hx.size()));
-    auto hz       = HostData(Z[j]);
-    const auto hy = HostData(Y[j]);
-    for (size_t i = 0; i < hx.size(); ++i) hz[i] = c[j] * hx[i] + hy[i];
-    MarkDeviceNeedsUpdate(Z[j]);
+    EnsureHostDataLength(Z[j], NVEC_VULKAN_LENGTH(X));
+    DispatchScaleAdd(c[j], X, Y[j], Z[j]);
   }
   return SUN_SUCCESS;
 }
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 SUNErrCode N_VDotProdMulti_Vulkan(int nvec, N_Vector x, N_Vector* Y,
                                   sunrealtype* dotprods)
 {
-  N_VCopyFromDevice_Vulkan(x);
-  const auto hx = HostData(x);
+  // Use GPU-accelerated dot product for each vector pair
   for (int j = 0; j < nvec; j++)
   {
-    N_VCopyFromDevice_Vulkan(Y[j]);
-    const auto hy = HostData(Y[j]);
-    dotprods[j]   = std::inner_product(hx.begin(), hx.end(), hy.begin(), ZERO);
+    dotprods[j] = DispatchDotProdReduction(x, Y[j]);
   }
   return SUN_SUCCESS;
 }
@@ -1501,7 +2340,6 @@ SUNErrCode N_VConstVectorArray_Vulkan(int nvec, sunrealtype c, N_Vector* Z)
   return SUN_SUCCESS;
 }
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 SUNErrCode N_VScaleAddMultiVectorArray_Vulkan(int nvec, int nsum,
                                               sunrealtype* a, N_Vector* X,
                                               N_Vector** Y, N_Vector** Z)
@@ -1575,7 +2413,6 @@ SUNErrCode N_VScaleAddMultiVectorArray_Vulkan(int nvec, int nsum,
   return SUN_SUCCESS;
 }
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 SUNErrCode N_VLinearCombinationVectorArray_Vulkan(int nvec, int nsum,
                                                   sunrealtype* c, N_Vector** X,
                                                   N_Vector* Z)
@@ -1701,33 +2538,14 @@ SUNErrCode N_VWrmsNormMaskVectorArray_Vulkan(int nvec, N_Vector* X, N_Vector* W,
 // Local reductions
 // ---------------------------------------------------------------------------
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VWSqrSumLocal_Vulkan(N_Vector x, N_Vector w)
 {
-  N_VCopyFromDevice_Vulkan(x);
-  N_VCopyFromDevice_Vulkan(w);
-  const auto hx   = HostData(x);
-  const auto hw   = HostData(w);
-  sunrealtype sum = ZERO;
-  for (size_t i = 0; i < hx.size(); ++i) sum += hx[i] * hx[i] * hw[i] * hw[i];
-  return sum;
+  return DispatchWSqrSumReduction(x, w, nullptr, false);
 }
 
-// TODO: this is currently very much like the nvector_serial implementation. fix.
 sunrealtype N_VWSqrSumMaskLocal_Vulkan(N_Vector x, N_Vector w, N_Vector id)
 {
-  N_VCopyFromDevice_Vulkan(x);
-  N_VCopyFromDevice_Vulkan(w);
-  N_VCopyFromDevice_Vulkan(id);
-  const auto hx   = HostData(x);
-  const auto hw   = HostData(w);
-  const auto hid  = HostData(id);
-  sunrealtype sum = ZERO;
-  for (size_t i = 0; i < hx.size(); ++i)
-  {
-    if (hid[i] > ZERO) sum += hx[i] * hx[i] * hw[i] * hw[i];
-  }
-  return sum;
+  return DispatchWSqrSumReduction(x, w, id, true);
 }
 
 // ---------------------------------------------------------------------------
