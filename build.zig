@@ -15,13 +15,15 @@ const c_flags: RunArgs = &.{
 };
 
 const cpp_flags: RunArgs = &.{
-    "-std=c++17",
+    "-std=c++20",
 };
 
 fn is_c(path: []const u8) bool {
     const extension = std.fs.path.extension(path);
     return std.ascii.eqlIgnoreCase(extension, ".c");
 }
+
+var kompute_dep: *std.Build.Dependency = undefined;
 
 const SundialsFeatures = struct {
     with_klu: bool,
@@ -77,6 +79,10 @@ fn sundials_add_library(
     });
 
     sundials_add_compile_options(b, lib, sources, config_header);
+    if (std.mem.indexOf(u8, name, "vulkan")) |_| {
+        const kompute_lib = kompute_dep.artifact("kompute");
+        lib.linkLibrary(kompute_lib);
+    }
     if (std.mem.indexOf(u8, name, "pthread")) |_| {
         lib.linkSystemLibrary("pthread");
     }
@@ -103,6 +109,9 @@ fn sundials_add_executable(
 
     sundials_add_compile_options(b, exe, sources, config_header);
     exe.linkLibrary(library);
+    if (std.mem.indexOf(u8, name, "vulkan")) |_| {
+        exe.linkSystemLibrary("vulkan");
+    }
 
     return exe;
 }
@@ -124,6 +133,7 @@ fn configHeader(
     appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_NVECTOR_SERIAL");
     appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_NVECTOR_PTHREADS");
     appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_NVECTOR_MANYVECTOR");
+    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_NVECTOR_VULKAN");
     appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNMATRIX_BAND");
     appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNMATRIX_DENSE");
     appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNMATRIX_SPARSE");
@@ -277,6 +287,11 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    kompute_dep = b.dependency("kompute", .{
+        .target = target,
+        .optimize = optimize,
+    });
+
     const config_header = configHeader(b, target, optimize, features) catch @panic("OOM");
 
     var sundials_components = std.ArrayList(SundialsComponent).initCapacity(b.allocator, 64) catch @panic("OOM");
@@ -319,6 +334,10 @@ pub fn build(b: *std.Build) !void {
             .src_files = &.{"src/sunmemory/system/sundials_system_memory.c"},
         },
         .{
+            .name = "sundials_sunmemvulkan",
+            .src_files = &.{"src/sunmemory/vulkan/sundials_vulkan_memory.cpp"},
+        },
+        .{
             .name = "sundials_nvecmanyvector",
             .src_files = &.{"src/nvector/manyvector/nvector_manyvector.c"},
         },
@@ -329,6 +348,10 @@ pub fn build(b: *std.Build) !void {
         .{
             .name = "sundials_nvecpthreads",
             .src_files = &.{"src/nvector/pthreads/nvector_pthreads.c"},
+        },
+        .{
+            .name = "sundials_nvecvulkan",
+            .src_files = &.{"src/nvector/vulkan/nvector_vulkan.cpp"},
         },
         .{
             .name = "sundials_sunmatrixband",
@@ -494,8 +517,9 @@ pub fn build(b: *std.Build) !void {
     for (sundials_targets.items) |sundials_lib| {
         arkode.linkLibrary(sundials_lib);
     }
-    arkode.installHeadersDirectory(b.path("include"), "", .{});
     arkode.installHeader(config_header.getOutput(), "sundials/sundials_config.h");
+    arkode.installHeadersDirectory(b.path("include"), "", .{});
+    arkode.installLibraryHeaders(kompute_dep.artifact("kompute"));
     b.installArtifact(arkode);
     sundials_targets.append(b.allocator, arkode) catch @panic("OOM");
 
@@ -1097,6 +1121,19 @@ fn build_unit_tests(
                 &.{ "10000", "1", "0" },
                 &.{ "10000", "2", "0" },
                 &.{ "10000", "4", "0" },
+            },
+        },
+        .{
+            .build_info = .{
+                .name = "test_nvector_vulkan",
+                .src_files = &.{
+                    "test/unit_tests/nvector/vulkan/test_nvector_vulkan.cpp",
+                    "test/unit_tests/nvector/test_nvector.c",
+                },
+            },
+            .run_infos = &.{
+                &.{ "1000", "0" },
+                &.{ "10000", "0" },
             },
         },
         .{
