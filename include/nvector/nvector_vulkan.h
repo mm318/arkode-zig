@@ -5,22 +5,31 @@
 #ifndef _NVECTOR_VULKAN_H
 #define _NVECTOR_VULKAN_H
 
-#include <kompute/Kompute.hpp>
 #include <stdio.h>
 #include <sundials/sundials_config.h>
 #include <sundials/sundials_nvector.h>
-#include <sundials/sundials_vulkan_policies.hpp>
 #include <sunmemory/sunmemory_vulkan.h>
 
-#ifdef __cplusplus /* wrapper to enable C++ usage */
+#ifdef __cplusplus
+
+#include <sundials/sundials_vulkan_policies.hpp>
+
 extern "C" {
+
+typedef SUNVulkanExecPolicy* SUNVulkanExecPolicyPtr;
+
+#else
+
+/* Opaque pointer for C; full type available in C++ */
+typedef void* SUNVulkanExecPolicyPtr;
+
 #endif
 
 struct _N_VectorContent_Vulkan
 {
   sunindextype length;
-  SUNVulkanExecPolicy* stream_exec_policy;
-  SUNVulkanExecPolicy* reduce_exec_policy;
+  SUNVulkanExecPolicyPtr stream_exec_policy;
+  SUNVulkanExecPolicyPtr reduce_exec_policy;
   void* priv; /* 'private' data */
 };
 
@@ -35,8 +44,8 @@ SUNDIALS_EXPORT void N_VSetHostArrayPointer_Vulkan(sunrealtype* h_vdata,
                                                    N_Vector v);
 
 SUNDIALS_EXPORT SUNErrCode N_VSetKernelExecPolicy_Vulkan(
-  N_Vector x, SUNVulkanExecPolicy* stream_exec_policy,
-  SUNVulkanExecPolicy* reduce_exec_policy);
+  N_Vector x, SUNVulkanExecPolicyPtr stream_exec_policy,
+  SUNVulkanExecPolicyPtr reduce_exec_policy);
 
 SUNDIALS_EXPORT void N_VCopyToDevice_Vulkan(N_Vector v);
 SUNDIALS_EXPORT void N_VCopyFromDevice_Vulkan(N_Vector v);
@@ -47,8 +56,9 @@ static inline sunindextype N_VGetLength_Vulkan(N_Vector x)
   return content->length;
 }
 
-static inline N_Vector_ID N_VGetVectorID_Vulkan(N_Vector /*v*/)
+static inline N_Vector_ID N_VGetVectorID_Vulkan(N_Vector v)
 {
+  (void)v;
   return SUNDIALS_NVEC_CUSTOM;
 }
 

@@ -5,7 +5,6 @@
 #ifndef _SUNDIALS_VULKANMEMORY_H
 #define _SUNDIALS_VULKANMEMORY_H
 
-#include <kompute/Kompute.hpp>
 #include <sundials/sundials_memory.h>
 
 #ifdef __cplusplus /* wrapper to enable C++ usage */
