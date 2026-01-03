@@ -1,5 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
+
+const kompute = @import("kompute");
 const zcc = @import("compile_commands.zig");
 
 const RunArgs = []const []const u8;
@@ -24,6 +26,7 @@ fn is_c(path: []const u8) bool {
 }
 
 var kompute_dep: *std.Build.Dependency = undefined;
+var kompute_log_level: kompute.LogLevel = .off;
 
 const SundialsFeatures = struct {
     with_klu: bool,
@@ -80,6 +83,10 @@ fn sundials_add_library(
 
     sundials_add_compile_options(b, lib, sources, config_header);
     if (std.mem.indexOf(u8, name, "vulkan")) |_| {
+        lib.root_module.addCMacro(
+            "KOMPUTE_OPT_ACTIVE_LOG_LEVEL",
+            kompute.LogLevel.getPreprocessorDefine(kompute_log_level),
+        );
         const kompute_lib = kompute_dep.artifact("kompute");
         lib.linkLibrary(kompute_lib);
     }
@@ -287,10 +294,13 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const log_level_str = if (optimize == .Debug) "Debug" else "Error";
     kompute_dep = b.dependency("kompute", .{
         .target = target,
         .optimize = optimize,
+        .log_level = log_level_str,
     });
+    kompute_log_level = kompute.LogLevel.parse(log_level_str, optimize);
 
     const config_header = configHeader(b, target, optimize, features) catch @panic("OOM");
 
