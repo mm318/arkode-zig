@@ -1923,6 +1923,7 @@ N_Vector N_VNewEmpty_Vulkan(SUNContext sunctx)
   v->ops->nvdestroy               = N_VDestroy_Vulkan;
   v->ops->nvspace                 = N_VSpace_Vulkan;
   v->ops->nvgetlength             = N_VGetLength_Vulkan;
+  v->ops->nvgetlocallength        = N_VGetLength_Vulkan;
   v->ops->nvgetarraypointer       = N_VGetHostArrayPointer_Vulkan;
   v->ops->nvgetdevicearraypointer = N_VGetDeviceArrayPointer_Vulkan;
   v->ops->nvsetarraypointer       = N_VSetHostArrayPointer_Vulkan;
