@@ -158,7 +158,7 @@ static void EnsureTensor(N_Vector v)
                               static_cast<uint32_t>(NVEC_VULKAN_LENGTH(v)),
                               sizeof(nvvulkanrealtype),
                               kp::Memory::dataType<nvvulkanrealtype>(),
-                              kp::Memory::MemoryTypes::eDevice);
+                              kp::Memory::MemoryTypes::eDeviceAndHost);
     }
     else
     {
@@ -169,7 +169,7 @@ static void EnsureTensor(N_Vector v)
                               static_cast<uint32_t>(NVEC_VULKAN_LENGTH(v)),
                               sizeof(nvvulkanrealtype),
                               kp::Memory::dataType<nvvulkanrealtype>(),
-                              kp::Memory::MemoryTypes::eDevice);
+                              kp::Memory::MemoryTypes::eDeviceAndHost);
     }
   }
 }
@@ -238,21 +238,20 @@ void N_VCopyToDevice_Vulkan(N_Vector v)
   auto* priv = NVEC_VULKAN_PRIVATE(v);
   if (!priv->device_needs_update) { return; }
   EnsureTensor(v);
+  // Shared memory (eDeviceAndHost): write directly to the mapped buffer
   if constexpr (kShaderFloatMatchesSunreal)
   {
-    std::span<sunrealtype> to_shader = HostData(v);
-    priv->device_data->setData(to_shader.data(), to_shader.size());
+    std::span<sunrealtype> src = HostData(v);
+    std::memcpy(priv->device_data->rawData(), src.data(),
+                src.size() * sizeof(sunrealtype));
   }
   else
   {
     std::vector<nvvulkanrealtype> to_shader =
       ToShaderBuffer<nvvulkanrealtype>(HostData(v));
-    priv->device_data->setData(to_shader);
+    std::memcpy(priv->device_data->rawData(), to_shader.data(),
+                to_shader.size() * sizeof(nvvulkanrealtype));
   }
-  auto seq = priv->manager->sequence();
-  seq->record<kp::OpSyncDevice>(
-    {std::static_pointer_cast<kp::Memory>(priv->device_data)});
-  seq->eval();
   priv->device_needs_update = false;
   priv->host_needs_update   = false;
 }
@@ -262,10 +261,7 @@ void N_VCopyFromDevice_Vulkan(N_Vector v)
   auto* priv = NVEC_VULKAN_PRIVATE(v);
   if (!priv->host_needs_update) { return; }
   EnsureTensor(v);
-  auto seq = priv->manager->sequence();
-  seq->record<kp::OpSyncLocal>(
-    {std::static_pointer_cast<kp::Memory>(priv->device_data)});
-  seq->eval();
+  // Shared memory (eDeviceAndHost): read directly from the mapped buffer
   nvvulkanrealtype* from_shader = priv->device_data->data<nvvulkanrealtype>();
   FromShaderBuffer<nvvulkanrealtype>({from_shader, priv->device_data->size()},
                                      HostData(v));
@@ -1249,7 +1245,6 @@ static void DispatchElementwise(ElementwiseOp op, sunrealtype a, sunrealtype b,
   if (y) { memObjects.push_back(privY->device_data); }
   else { memObjects.push_back(privX->device_data); }
   memObjects.push_back(privZ->device_data);
-  seq->record<kp::OpSyncDevice>(memObjects);
 
   struct Push
   {
@@ -1271,16 +1266,12 @@ static void DispatchElementwise(ElementwiseOp op, sunrealtype a, sunrealtype b,
                                                  std::vector<uint32_t>{}, pushConstants);
 
   seq->record<kp::OpAlgoDispatch>(algo);
-  seq->record<kp::OpSyncLocal>(
-    {std::static_pointer_cast<kp::Memory>(privZ->device_data)});
   seq->eval();
 
-  // Copy results back to host - match the pattern in N_VCopyFromDevice_Vulkan
-  nvvulkanrealtype* from_shader = privZ->device_data->data<nvvulkanrealtype>();
-  FromShaderBuffer<nvvulkanrealtype>({from_shader, privZ->device_data->size()},
-                                     HostData(z));
+  // With shared memory, the result is already visible to the host after eval.
+  // Defer host_data update until it's actually needed.
   privZ->device_needs_update = false;
-  privZ->host_needs_update   = false;
+  privZ->host_needs_update   = true;
 }
 
 // GPU-accelerated dot product using parallel reduction
@@ -1308,13 +1299,13 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
   auto partialSumsTensor =
     privX->manager->tensor(nullptr, numGroups, sizeof(nvvulkanrealtype),
                            kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDevice);
+                           kp::Memory::MemoryTypes::eDeviceAndHost);
 
   // Create tensor for final result (single element)
   auto resultTensor =
     privX->manager->tensor(nullptr, 1, sizeof(nvvulkanrealtype),
                            kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDevice);
+                           kp::Memory::MemoryTypes::eDeviceAndHost);
 
   // First pass: compute partial sums per workgroup
   {
@@ -1339,7 +1330,6 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
     auto seq = privX->manager->sequence();
-    seq->record<kp::OpSyncDevice>(memObjects);
 
     auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
@@ -1375,8 +1365,6 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->record<kp::OpSyncLocal>(
-      {std::static_pointer_cast<kp::Memory>(resultTensor)});
     seq->eval();
   }
 
@@ -1405,13 +1393,13 @@ static sunrealtype DispatchMaxNormReduction(N_Vector x)
   auto partialMaxTensor =
     privX->manager->tensor(nullptr, numGroups, sizeof(nvvulkanrealtype),
                            kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDevice);
+                           kp::Memory::MemoryTypes::eDeviceAndHost);
 
   // Create tensor for final result (single element)
   auto resultTensor =
     privX->manager->tensor(nullptr, 1, sizeof(nvvulkanrealtype),
                            kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDevice);
+                           kp::Memory::MemoryTypes::eDeviceAndHost);
 
   // First pass: compute partial max per workgroup
   {
@@ -1435,7 +1423,6 @@ static sunrealtype DispatchMaxNormReduction(N_Vector x)
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
     auto seq = privX->manager->sequence();
-    seq->record<kp::OpSyncDevice>(memObjects);
 
     auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
@@ -1471,8 +1458,6 @@ static sunrealtype DispatchMaxNormReduction(N_Vector x)
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->record<kp::OpSyncLocal>(
-      {std::static_pointer_cast<kp::Memory>(resultTensor)});
     seq->eval();
   }
 
@@ -1504,12 +1489,12 @@ static sunrealtype DispatchWSqrSumReduction(N_Vector x, N_Vector w, N_Vector id,
   auto partialSumsTensor =
     privX->manager->tensor(nullptr, numGroups, sizeof(nvvulkanrealtype),
                            kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDevice);
+                           kp::Memory::MemoryTypes::eDeviceAndHost);
 
   auto resultTensor =
     privX->manager->tensor(nullptr, 1, sizeof(nvvulkanrealtype),
                            kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDevice);
+                           kp::Memory::MemoryTypes::eDeviceAndHost);
 
   // First pass
   {
@@ -1537,7 +1522,6 @@ static sunrealtype DispatchWSqrSumReduction(N_Vector x, N_Vector w, N_Vector id,
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
     auto seq = privX->manager->sequence();
-    seq->record<kp::OpSyncDevice>(memObjects);
 
     auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
@@ -1573,8 +1557,6 @@ static sunrealtype DispatchWSqrSumReduction(N_Vector x, N_Vector w, N_Vector id,
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->record<kp::OpSyncLocal>(
-      {std::static_pointer_cast<kp::Memory>(resultTensor)});
     seq->eval();
   }
 
@@ -1603,12 +1585,12 @@ static sunrealtype DispatchMinQuotientReduction(N_Vector num, N_Vector denom)
   auto partialMinTensor =
     privN->manager->tensor(nullptr, numGroups, sizeof(nvvulkanrealtype),
                            kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDevice);
+                           kp::Memory::MemoryTypes::eDeviceAndHost);
 
   auto resultTensor =
     privN->manager->tensor(nullptr, 1, sizeof(nvvulkanrealtype),
                            kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDevice);
+                           kp::Memory::MemoryTypes::eDeviceAndHost);
 
   // First pass
   {
@@ -1633,7 +1615,6 @@ static sunrealtype DispatchMinQuotientReduction(N_Vector num, N_Vector denom)
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
     auto seq = privN->manager->sequence();
-    seq->record<kp::OpSyncDevice>(memObjects);
 
     auto algo = privN->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
@@ -1669,8 +1650,6 @@ static sunrealtype DispatchMinQuotientReduction(N_Vector num, N_Vector denom)
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->record<kp::OpSyncLocal>(
-      {std::static_pointer_cast<kp::Memory>(resultTensor)});
     seq->eval();
   }
 
@@ -1709,11 +1688,11 @@ static sunbooleantype DispatchInvTest(N_Vector x, N_Vector z)
   auto hasZeroTensor = privX->manager->tensor(nullptr, numGroups,
                                               sizeof(uint32_t),
                                               kp::Memory::dataType<uint32_t>(),
-                                              kp::Memory::MemoryTypes::eDevice);
+                                              kp::Memory::MemoryTypes::eDeviceAndHost);
 
   auto resultTensor = privX->manager->tensor(nullptr, 1, sizeof(uint32_t),
                                              kp::Memory::dataType<uint32_t>(),
-                                             kp::Memory::MemoryTypes::eDevice);
+                                             kp::Memory::MemoryTypes::eDeviceAndHost);
 
   // First pass: compute inverses and flag zeros
   {
@@ -1738,7 +1717,6 @@ static sunbooleantype DispatchInvTest(N_Vector x, N_Vector z)
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
     auto seq = privX->manager->sequence();
-    seq->record<kp::OpSyncDevice>(memObjects);
 
     auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
@@ -1774,24 +1752,12 @@ static sunbooleantype DispatchInvTest(N_Vector x, N_Vector z)
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->record<kp::OpSyncLocal>(
-      {std::static_pointer_cast<kp::Memory>(resultTensor)});
     seq->eval();
   }
 
-  // Sync Z back to host
-  {
-    auto seq = privZ->manager->sequence();
-    seq->record<kp::OpSyncLocal>(
-      {std::static_pointer_cast<kp::Memory>(privZ->device_data)});
-    seq->eval();
-
-    nvvulkanrealtype* from_shader = privZ->device_data->data<nvvulkanrealtype>();
-    FromShaderBuffer<nvvulkanrealtype>({from_shader, privZ->device_data->size()},
-                                       HostData(z));
-    privZ->device_needs_update = false;
-    privZ->host_needs_update   = false;
-  }
+  // Z result is in shared memory, defer host_data update
+  privZ->device_needs_update = false;
+  privZ->host_needs_update   = true;
 
   uint32_t hasZero = resultTensor->data<uint32_t>()[0];
   return hasZero ? SUNFALSE : SUNTRUE;
@@ -1816,11 +1782,11 @@ static sunbooleantype DispatchConstrMask(N_Vector c, N_Vector x, N_Vector m)
   auto hasViolationTensor =
     privX->manager->tensor(nullptr, numGroups, sizeof(uint32_t),
                            kp::Memory::dataType<uint32_t>(),
-                           kp::Memory::MemoryTypes::eDevice);
+                           kp::Memory::MemoryTypes::eDeviceAndHost);
 
   auto resultTensor = privX->manager->tensor(nullptr, 1, sizeof(uint32_t),
                                              kp::Memory::dataType<uint32_t>(),
-                                             kp::Memory::MemoryTypes::eDevice);
+                                             kp::Memory::MemoryTypes::eDeviceAndHost);
 
   // First pass: check constraints and set mask
   {
@@ -1846,7 +1812,6 @@ static sunbooleantype DispatchConstrMask(N_Vector c, N_Vector x, N_Vector m)
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
     auto seq = privX->manager->sequence();
-    seq->record<kp::OpSyncDevice>(memObjects);
 
     auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
@@ -1882,24 +1847,12 @@ static sunbooleantype DispatchConstrMask(N_Vector c, N_Vector x, N_Vector m)
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->record<kp::OpSyncLocal>(
-      {std::static_pointer_cast<kp::Memory>(resultTensor)});
     seq->eval();
   }
 
-  // Sync M back to host
-  {
-    auto seq = privM->manager->sequence();
-    seq->record<kp::OpSyncLocal>(
-      {std::static_pointer_cast<kp::Memory>(privM->device_data)});
-    seq->eval();
-
-    nvvulkanrealtype* from_shader = privM->device_data->data<nvvulkanrealtype>();
-    FromShaderBuffer<nvvulkanrealtype>({from_shader, privM->device_data->size()},
-                                       HostData(m));
-    privM->device_needs_update = false;
-    privM->host_needs_update   = false;
-  }
+  // M result is in shared memory, defer host_data update
+  privM->device_needs_update = false;
+  privM->host_needs_update   = true;
 
   uint32_t hasViolation = resultTensor->data<uint32_t>()[0];
   return hasViolation ? SUNFALSE : SUNTRUE;
@@ -1941,21 +1894,16 @@ static void DispatchScaleAdd(sunrealtype c, N_Vector x, N_Vector y, N_Vector z)
   std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
   auto seq = privZ->manager->sequence();
-  seq->record<kp::OpSyncDevice>(memObjects);
 
   auto algo = privZ->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
                                         std::vector<uint32_t>{}, pushConstants);
 
   seq->record<kp::OpAlgoDispatch>(algo);
-  seq->record<kp::OpSyncLocal>(
-    {std::static_pointer_cast<kp::Memory>(privZ->device_data)});
   seq->eval();
 
-  nvvulkanrealtype* from_shader = privZ->device_data->data<nvvulkanrealtype>();
-  FromShaderBuffer<nvvulkanrealtype>({from_shader, privZ->device_data->size()},
-                                     HostData(z));
+  // Defer host_data update
   privZ->device_needs_update = false;
-  privZ->host_needs_update   = false;
+  privZ->host_needs_update   = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -2090,7 +2038,7 @@ N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdata,
         priv->manager->tensor(d_vdata, static_cast<uint32_t>(length),
                               sizeof(nvvulkanrealtype),
                               kp::Memory::dataType<nvvulkanrealtype>(),
-                              kp::Memory::MemoryTypes::eDevice);
+                              kp::Memory::MemoryTypes::eDeviceAndHost);
     }
     else
     {
@@ -2101,7 +2049,7 @@ N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdata,
                               static_cast<uint32_t>(length),
                               sizeof(nvvulkanrealtype),
                               kp::Memory::dataType<nvvulkanrealtype>(),
-                              kp::Memory::MemoryTypes::eDevice);
+                              kp::Memory::MemoryTypes::eDeviceAndHost);
     }
     NVEC_VULKAN_PRIVATE(v)->device_needs_update = false;
   }
