@@ -25,6 +25,8 @@ typedef void* SUNVulkanExecPolicyPtr;
 
 #endif
 
+typedef float nvvulkanrealtype;
+
 struct _N_VectorContent_Vulkan
 {
   sunindextype length;
@@ -47,9 +49,6 @@ SUNDIALS_EXPORT SUNErrCode N_VSetKernelExecPolicy_Vulkan(
   N_Vector x, SUNVulkanExecPolicyPtr stream_exec_policy,
   SUNVulkanExecPolicyPtr reduce_exec_policy);
 
-SUNDIALS_EXPORT void N_VCopyToDevice_Vulkan(N_Vector v);
-SUNDIALS_EXPORT void N_VCopyFromDevice_Vulkan(N_Vector v);
-
 static inline sunindextype N_VGetLength_Vulkan(N_Vector x)
 {
   N_VectorContent_Vulkan content = (N_VectorContent_Vulkan)x->content;
@@ -64,6 +63,13 @@ static inline N_Vector_ID N_VGetVectorID_Vulkan(N_Vector v)
 
 sunrealtype* N_VGetHostArrayPointer_Vulkan(N_Vector x);
 sunrealtype* N_VGetDeviceArrayPointer_Vulkan(N_Vector x);
+SUNDIALS_EXPORT nvvulkanrealtype* N_VGetDeviceData_Vulkan(N_Vector x);
+
+SUNDIALS_EXPORT void N_VCopyToDevice_Vulkan(N_Vector v);
+SUNDIALS_EXPORT void N_VCopyFromDevice_Vulkan(N_Vector v);
+
+SUNDIALS_EXPORT void N_VMarkDeviceNeedsUpdate_Vulkan(N_Vector v);
+SUNDIALS_EXPORT void N_VMarkHostNeedsUpdate_Vulkan(N_Vector v);
 
 SUNDIALS_EXPORT N_Vector N_VCloneEmpty_Vulkan(N_Vector w);
 SUNDIALS_EXPORT N_Vector N_VClone_Vulkan(N_Vector w);

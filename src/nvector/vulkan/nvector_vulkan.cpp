@@ -63,10 +63,8 @@ struct PrivateVectorContent_Vulkan
 #define NVEC_VULKAN_PRIVATE(x) \
   (static_cast<PrivateVectorContent_Vulkan*>(NVEC_VULKAN_CONTENT(x)->priv))
 
-using ShaderFloat = float;
-
-static constexpr bool kShaderMatchesSunreal =
-  std::is_same_v<ShaderFloat, sunrealtype>;
+static constexpr bool kShaderFloatMatchesSunreal =
+  std::is_same_v<nvvulkanrealtype, sunrealtype>;
 
 static inline std::span<sunrealtype> HostData(N_Vector v)
 {
@@ -153,39 +151,86 @@ static void EnsureTensor(N_Vector v)
   auto* priv = NVEC_VULKAN_PRIVATE(v);
   if (!priv->device_data)
   {
-    if constexpr (kShaderMatchesSunreal)
+    if constexpr (kShaderFloatMatchesSunreal)
     {
       priv->device_data =
         priv->manager->tensor(N_VGetHostArrayPointer_Vulkan(v),
                               static_cast<uint32_t>(NVEC_VULKAN_LENGTH(v)),
-                              sizeof(ShaderFloat),
-                              kp::Memory::dataType<ShaderFloat>(),
+                              sizeof(nvvulkanrealtype),
+                              kp::Memory::dataType<nvvulkanrealtype>(),
                               kp::Memory::MemoryTypes::eDevice);
     }
     else
     {
-      std::vector<ShaderFloat> shader_init =
-        ToShaderBuffer<ShaderFloat>(HostData(v));
+      std::vector<nvvulkanrealtype> shader_init =
+        ToShaderBuffer<nvvulkanrealtype>(HostData(v));
       priv->device_data =
         priv->manager->tensor(shader_init.empty() ? nullptr : shader_init.data(),
                               static_cast<uint32_t>(NVEC_VULKAN_LENGTH(v)),
-                              sizeof(ShaderFloat),
-                              kp::Memory::dataType<ShaderFloat>(),
+                              sizeof(nvvulkanrealtype),
+                              kp::Memory::dataType<nvvulkanrealtype>(),
                               kp::Memory::MemoryTypes::eDevice);
     }
   }
 }
 
-static void MarkDeviceNeedsUpdate(N_Vector v)
+void N_VSetHostArrayPointer_Vulkan(sunrealtype* h_vdata, N_Vector v)
 {
-  NVEC_VULKAN_PRIVATE(v)->device_needs_update = true;
-  NVEC_VULKAN_PRIVATE(v)->host_needs_update   = false;
+  auto* priv = NVEC_VULKAN_PRIVATE(v);
+
+  if (h_vdata == nullptr)
+  {
+    priv->host_data = std::vector(NVEC_VULKAN_LENGTH(v),
+                                  static_cast<sunrealtype>(ZERO));
+  }
+  else
+  {
+    // Check if h_vdata points to our internal vector's data - if so, don't
+    // replace the variant (which would destroy the vector and make h_vdata
+    // a dangling pointer)
+    if (auto* vec = std::get_if<std::vector<sunrealtype>>(&priv->host_data))
+    {
+      if (vec->data() != h_vdata) { priv->host_data = h_vdata; }
+    }
+    else { priv->host_data = h_vdata; }
+  }
+
+  N_VMarkDeviceNeedsUpdate_Vulkan(v);
 }
 
-static void MarkHostNeedsUpdate(N_Vector v)
+sunrealtype* N_VGetHostArrayPointer_Vulkan(N_Vector x)
 {
-  NVEC_VULKAN_PRIVATE(v)->host_needs_update   = true;
-  NVEC_VULKAN_PRIVATE(v)->device_needs_update = false;
+  PrivateVectorContent_Vulkan* priv = NVEC_VULKAN_PRIVATE(x);
+  if (sunrealtype* const* ptr = std::get_if<sunrealtype*>(&priv->host_data))
+  {
+    return *ptr;
+  }
+  else if (std::vector<sunrealtype>* data =
+             std::get_if<std::vector<sunrealtype>>(&priv->host_data))
+  {
+    assert(data->size() >= static_cast<size_t>(NVEC_VULKAN_LENGTH(x)));
+    return data->data();
+  }
+  else { return nullptr; }
+}
+
+sunrealtype* N_VGetDeviceArrayPointer_Vulkan(N_Vector x)
+{
+  if constexpr (kShaderFloatMatchesSunreal)
+  {
+    // kShaderFloatMatchesSunreal guarantees nvvulkanrealtype == sunrealtype here,
+    // but if constexpr in a non-template function doesn't suppress type-checking
+    // of the discarded branch, so we need the cast.
+    return reinterpret_cast<sunrealtype*>(N_VGetDeviceData_Vulkan(x));
+  }
+  else { return nullptr; }
+}
+
+nvvulkanrealtype* N_VGetDeviceData_Vulkan(N_Vector x)
+{
+  EnsureTensor(x);
+  auto* priv = NVEC_VULKAN_PRIVATE(x);
+  return static_cast<nvvulkanrealtype*>(priv->device_data->rawData());
 }
 
 void N_VCopyToDevice_Vulkan(N_Vector v)
@@ -193,14 +238,15 @@ void N_VCopyToDevice_Vulkan(N_Vector v)
   auto* priv = NVEC_VULKAN_PRIVATE(v);
   if (!priv->device_needs_update) { return; }
   EnsureTensor(v);
-  if constexpr (kShaderMatchesSunreal)
+  if constexpr (kShaderFloatMatchesSunreal)
   {
     std::span<sunrealtype> to_shader = HostData(v);
     priv->device_data->setData(to_shader.data(), to_shader.size());
   }
   else
   {
-    std::vector<ShaderFloat> to_shader = ToShaderBuffer<ShaderFloat>(HostData(v));
+    std::vector<nvvulkanrealtype> to_shader =
+      ToShaderBuffer<nvvulkanrealtype>(HostData(v));
     priv->device_data->setData(to_shader);
   }
   auto seq = priv->manager->sequence();
@@ -220,11 +266,23 @@ void N_VCopyFromDevice_Vulkan(N_Vector v)
   seq->record<kp::OpSyncLocal>(
     {std::static_pointer_cast<kp::Memory>(priv->device_data)});
   seq->eval();
-  ShaderFloat* from_shader = priv->device_data->data<ShaderFloat>();
-  FromShaderBuffer<ShaderFloat>({from_shader, priv->device_data->size()},
-                                HostData(v));
+  nvvulkanrealtype* from_shader = priv->device_data->data<nvvulkanrealtype>();
+  FromShaderBuffer<nvvulkanrealtype>({from_shader, priv->device_data->size()},
+                                     HostData(v));
   priv->device_needs_update = false;
   priv->host_needs_update   = false;
+}
+
+void N_VMarkDeviceNeedsUpdate_Vulkan(N_Vector v)
+{
+  NVEC_VULKAN_PRIVATE(v)->device_needs_update = true;
+  NVEC_VULKAN_PRIVATE(v)->host_needs_update   = false;
+}
+
+void N_VMarkHostNeedsUpdate_Vulkan(N_Vector v)
+{
+  NVEC_VULKAN_PRIVATE(v)->host_needs_update   = true;
+  NVEC_VULKAN_PRIVATE(v)->device_needs_update = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -234,7 +292,8 @@ void N_VCopyFromDevice_Vulkan(N_Vector v)
 // Element-wise shader
 static const std::string ElementwiseShaderSource()
 {
-  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+  const char* real = (sizeof(nvvulkanrealtype) == sizeof(double)) ? "double"
+                                                                  : "float";
 
   std::string src = fmt::format(R"(
 // Elementwise operations controlled via push constants.
@@ -288,7 +347,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
 // Dot product shader
 static const std::string DotProdShaderSource()
 {
-  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+  const char* real = (sizeof(nvvulkanrealtype) == sizeof(double)) ? "double"
+                                                                  : "float";
 
   // Parallel reduction shader for dot product.
   // Each workgroup computes a partial sum using shared memory reduction.
@@ -358,7 +418,8 @@ void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
 // MaxNorm reduction shader (computes max(abs(x)))
 static const std::string MaxNormShaderSource()
 {
-  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+  const char* real = (sizeof(nvvulkanrealtype) == sizeof(double)) ? "double"
+                                                                  : "float";
 
   std::string src = fmt::format(R"(
 struct Params {{
@@ -424,7 +485,8 @@ void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
 // Weighted squared sum reduction shader (for WrmsNorm, WL2Norm, WSqrSum)
 static const std::string WSqrSumShaderSource()
 {
-  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+  const char* real = (sizeof(nvvulkanrealtype) == sizeof(double)) ? "double"
+                                                                  : "float";
 
   std::string src = fmt::format(R"(
 struct Params {{
@@ -494,8 +556,9 @@ void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
 // Min quotient reduction shader (finds min(num/denom) where denom != 0)
 static const std::string MinQuotientShaderSource()
 {
-  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
-  const std::string big = (sizeof(ShaderFloat) == sizeof(double))
+  const char* real = (sizeof(nvvulkanrealtype) == sizeof(double)) ? "double"
+                                                                  : "float";
+  const std::string big = (sizeof(nvvulkanrealtype) == sizeof(double))
                             ? std::to_string(DBL_MAX)
                             : std::to_string(FLT_MAX);
 
@@ -564,7 +627,8 @@ void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID)
 // InvTest shader (computes z = 1/x, returns flag if any x == 0)
 static const std::string InvTestShaderSource()
 {
-  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+  const char* real = (sizeof(nvvulkanrealtype) == sizeof(double)) ? "double"
+                                                                  : "float";
 
   std::string src = fmt::format(R"(
 struct Params {{
@@ -615,7 +679,8 @@ void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID, uint3 dtid : SV
 // ConstrMask shader (checks constraints and sets mask)
 static const std::string ConstrMaskShaderSource()
 {
-  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+  const char* real = (sizeof(nvvulkanrealtype) == sizeof(double)) ? "double"
+                                                                  : "float";
 
   std::string src = fmt::format(R"(
 struct Params {{
@@ -678,7 +743,8 @@ void main(uint3 gtid : SV_GroupThreadID, uint3 gid : SV_GroupID, uint3 dtid : SV
 // Linear combination shader (z = sum of c[i] * X[i])
 static const std::string LinearCombShaderSource()
 {
-  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+  const char* real = (sizeof(nvvulkanrealtype) == sizeof(double)) ? "double"
+                                                                  : "float";
 
   // This shader handles up to 8 vectors. For more, we call it multiple times.
   std::string src = fmt::format(R"(
@@ -743,7 +809,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
 // ScaleAddMulti shader (Z[j] = c[j] * X + Y[j])
 static const std::string ScaleAddShaderSource()
 {
-  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+  const char* real = (sizeof(nvvulkanrealtype) == sizeof(double)) ? "double"
+                                                                  : "float";
 
   std::string src = fmt::format(R"(
 struct Params {{
@@ -777,7 +844,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
 // Final max reduction shader: finds max of partial results
 static const std::string FinalMaxReduceShaderSource()
 {
-  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+  const char* real = (sizeof(nvvulkanrealtype) == sizeof(double)) ? "double"
+                                                                  : "float";
 
   std::string src = fmt::format(R"(
 struct Params {{
@@ -837,8 +905,9 @@ void main(uint3 gtid : SV_GroupThreadID)
 
 static const std::string FinalMinReduceShaderSource()
 {
-  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
-  const std::string big = (sizeof(ShaderFloat) == sizeof(double))
+  const char* real = (sizeof(nvvulkanrealtype) == sizeof(double)) ? "double"
+                                                                  : "float";
+  const std::string big = (sizeof(nvvulkanrealtype) == sizeof(double))
                             ? std::to_string(DBL_MAX)
                             : std::to_string(FLT_MAX);
 
@@ -899,7 +968,8 @@ void main(uint3 gtid : SV_GroupThreadID)
 // Reduction shader: sums partial results from first pass
 static const std::string FinalSumReduceShaderSource()
 {
-  const char* real = (sizeof(ShaderFloat) == sizeof(double)) ? "double" : "float";
+  const char* real = (sizeof(nvvulkanrealtype) == sizeof(double)) ? "double"
+                                                                  : "float";
 
   std::string src = fmt::format(R"(
 struct Params {{
@@ -1206,9 +1276,9 @@ static void DispatchElementwise(ElementwiseOp op, sunrealtype a, sunrealtype b,
   seq->eval();
 
   // Copy results back to host - match the pattern in N_VCopyFromDevice_Vulkan
-  ShaderFloat* from_shader = privZ->device_data->data<ShaderFloat>();
-  FromShaderBuffer<ShaderFloat>({from_shader, privZ->device_data->size()},
-                                HostData(z));
+  nvvulkanrealtype* from_shader = privZ->device_data->data<nvvulkanrealtype>();
+  FromShaderBuffer<nvvulkanrealtype>({from_shader, privZ->device_data->size()},
+                                     HostData(z));
   privZ->device_needs_update = false;
   privZ->host_needs_update   = false;
 }
@@ -1236,14 +1306,15 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
 
   // Create tensor for partial sums (one per workgroup)
   auto partialSumsTensor =
-    privX->manager->tensor(nullptr, numGroups, sizeof(ShaderFloat),
-                           kp::Memory::dataType<ShaderFloat>(),
+    privX->manager->tensor(nullptr, numGroups, sizeof(nvvulkanrealtype),
+                           kp::Memory::dataType<nvvulkanrealtype>(),
                            kp::Memory::MemoryTypes::eDevice);
 
   // Create tensor for final result (single element)
-  auto resultTensor = privX->manager->tensor(nullptr, 1, sizeof(ShaderFloat),
-                                             kp::Memory::dataType<ShaderFloat>(),
-                                             kp::Memory::MemoryTypes::eDevice);
+  auto resultTensor =
+    privX->manager->tensor(nullptr, 1, sizeof(nvvulkanrealtype),
+                           kp::Memory::dataType<nvvulkanrealtype>(),
+                           kp::Memory::MemoryTypes::eDevice);
 
   // First pass: compute partial sums per workgroup
   {
@@ -1310,7 +1381,7 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
   }
 
   // Read result back
-  ShaderFloat result = resultTensor->data<ShaderFloat>()[0];
+  nvvulkanrealtype result = resultTensor->data<nvvulkanrealtype>()[0];
   return static_cast<sunrealtype>(result);
 }
 
@@ -1332,14 +1403,15 @@ static sunrealtype DispatchMaxNormReduction(N_Vector x)
 
   // Create tensor for partial max values (one per workgroup)
   auto partialMaxTensor =
-    privX->manager->tensor(nullptr, numGroups, sizeof(ShaderFloat),
-                           kp::Memory::dataType<ShaderFloat>(),
+    privX->manager->tensor(nullptr, numGroups, sizeof(nvvulkanrealtype),
+                           kp::Memory::dataType<nvvulkanrealtype>(),
                            kp::Memory::MemoryTypes::eDevice);
 
   // Create tensor for final result (single element)
-  auto resultTensor = privX->manager->tensor(nullptr, 1, sizeof(ShaderFloat),
-                                             kp::Memory::dataType<ShaderFloat>(),
-                                             kp::Memory::MemoryTypes::eDevice);
+  auto resultTensor =
+    privX->manager->tensor(nullptr, 1, sizeof(nvvulkanrealtype),
+                           kp::Memory::dataType<nvvulkanrealtype>(),
+                           kp::Memory::MemoryTypes::eDevice);
 
   // First pass: compute partial max per workgroup
   {
@@ -1405,7 +1477,7 @@ static sunrealtype DispatchMaxNormReduction(N_Vector x)
   }
 
   // Read result back
-  ShaderFloat result = resultTensor->data<ShaderFloat>()[0];
+  nvvulkanrealtype result = resultTensor->data<nvvulkanrealtype>()[0];
   return static_cast<sunrealtype>(result);
 }
 
@@ -1430,13 +1502,14 @@ static sunrealtype DispatchWSqrSumReduction(N_Vector x, N_Vector w, N_Vector id,
          "reduce_exec_policy blockSize must match shader LOCAL_SIZE_X");
 
   auto partialSumsTensor =
-    privX->manager->tensor(nullptr, numGroups, sizeof(ShaderFloat),
-                           kp::Memory::dataType<ShaderFloat>(),
+    privX->manager->tensor(nullptr, numGroups, sizeof(nvvulkanrealtype),
+                           kp::Memory::dataType<nvvulkanrealtype>(),
                            kp::Memory::MemoryTypes::eDevice);
 
-  auto resultTensor = privX->manager->tensor(nullptr, 1, sizeof(ShaderFloat),
-                                             kp::Memory::dataType<ShaderFloat>(),
-                                             kp::Memory::MemoryTypes::eDevice);
+  auto resultTensor =
+    privX->manager->tensor(nullptr, 1, sizeof(nvvulkanrealtype),
+                           kp::Memory::dataType<nvvulkanrealtype>(),
+                           kp::Memory::MemoryTypes::eDevice);
 
   // First pass
   {
@@ -1505,7 +1578,7 @@ static sunrealtype DispatchWSqrSumReduction(N_Vector x, N_Vector w, N_Vector id,
     seq->eval();
   }
 
-  ShaderFloat result = resultTensor->data<ShaderFloat>()[0];
+  nvvulkanrealtype result = resultTensor->data<nvvulkanrealtype>()[0];
   return static_cast<sunrealtype>(result);
 }
 
@@ -1528,13 +1601,14 @@ static sunrealtype DispatchMinQuotientReduction(N_Vector num, N_Vector denom)
          "reduce_exec_policy blockSize must match shader LOCAL_SIZE_X");
 
   auto partialMinTensor =
-    privN->manager->tensor(nullptr, numGroups, sizeof(ShaderFloat),
-                           kp::Memory::dataType<ShaderFloat>(),
+    privN->manager->tensor(nullptr, numGroups, sizeof(nvvulkanrealtype),
+                           kp::Memory::dataType<nvvulkanrealtype>(),
                            kp::Memory::MemoryTypes::eDevice);
 
-  auto resultTensor = privN->manager->tensor(nullptr, 1, sizeof(ShaderFloat),
-                                             kp::Memory::dataType<ShaderFloat>(),
-                                             kp::Memory::MemoryTypes::eDevice);
+  auto resultTensor =
+    privN->manager->tensor(nullptr, 1, sizeof(nvvulkanrealtype),
+                           kp::Memory::dataType<nvvulkanrealtype>(),
+                           kp::Memory::MemoryTypes::eDevice);
 
   // First pass
   {
@@ -1600,12 +1674,12 @@ static sunrealtype DispatchMinQuotientReduction(N_Vector num, N_Vector denom)
     seq->eval();
   }
 
-  ShaderFloat result = resultTensor->data<ShaderFloat>()[0];
+  nvvulkanrealtype result = resultTensor->data<nvvulkanrealtype>()[0];
 
   // If the GPU returned its "big" sentinel value, map it to
   // SUN_BIG_REAL so the result matches the expected sunrealtype range.
   // This handles the case where all denominators are zero.
-  if constexpr (sizeof(ShaderFloat) == sizeof(double))
+  if constexpr (sizeof(nvvulkanrealtype) == sizeof(double))
   {
     if (result >= DBL_MAX) { return SUN_BIG_REAL; }
   }
@@ -1712,9 +1786,9 @@ static sunbooleantype DispatchInvTest(N_Vector x, N_Vector z)
       {std::static_pointer_cast<kp::Memory>(privZ->device_data)});
     seq->eval();
 
-    ShaderFloat* from_shader = privZ->device_data->data<ShaderFloat>();
-    FromShaderBuffer<ShaderFloat>({from_shader, privZ->device_data->size()},
-                                  HostData(z));
+    nvvulkanrealtype* from_shader = privZ->device_data->data<nvvulkanrealtype>();
+    FromShaderBuffer<nvvulkanrealtype>({from_shader, privZ->device_data->size()},
+                                       HostData(z));
     privZ->device_needs_update = false;
     privZ->host_needs_update   = false;
   }
@@ -1820,9 +1894,9 @@ static sunbooleantype DispatchConstrMask(N_Vector c, N_Vector x, N_Vector m)
       {std::static_pointer_cast<kp::Memory>(privM->device_data)});
     seq->eval();
 
-    ShaderFloat* from_shader = privM->device_data->data<ShaderFloat>();
-    FromShaderBuffer<ShaderFloat>({from_shader, privM->device_data->size()},
-                                  HostData(m));
+    nvvulkanrealtype* from_shader = privM->device_data->data<nvvulkanrealtype>();
+    FromShaderBuffer<nvvulkanrealtype>({from_shader, privM->device_data->size()},
+                                       HostData(m));
     privM->device_needs_update = false;
     privM->host_needs_update   = false;
   }
@@ -1877,9 +1951,9 @@ static void DispatchScaleAdd(sunrealtype c, N_Vector x, N_Vector y, N_Vector z)
     {std::static_pointer_cast<kp::Memory>(privZ->device_data)});
   seq->eval();
 
-  ShaderFloat* from_shader = privZ->device_data->data<ShaderFloat>();
-  FromShaderBuffer<ShaderFloat>({from_shader, privZ->device_data->size()},
-                                HostData(z));
+  nvvulkanrealtype* from_shader = privZ->device_data->data<nvvulkanrealtype>();
+  FromShaderBuffer<nvvulkanrealtype>({from_shader, privZ->device_data->size()},
+                                     HostData(z));
   privZ->device_needs_update = false;
   privZ->host_needs_update   = false;
 }
@@ -1887,8 +1961,6 @@ static void DispatchScaleAdd(sunrealtype c, N_Vector x, N_Vector y, N_Vector z)
 // ---------------------------------------------------------------------------
 // NVECTOR creation / destruction
 // ---------------------------------------------------------------------------
-
-extern "C" {
 
 N_Vector N_VNewEmpty_Vulkan(SUNContext sunctx)
 {
@@ -2001,7 +2073,7 @@ N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdata,
   if (h_vdata != nullptr)
   {
     NVEC_VULKAN_PRIVATE(v)->host_data = std::vector(h_vdata, h_vdata + length);
-    MarkDeviceNeedsUpdate(v);
+    N_VMarkDeviceNeedsUpdate_Vulkan(v);
   }
   else
   {
@@ -2012,78 +2084,29 @@ N_Vector N_VMake_Vulkan(sunindextype length, sunrealtype* h_vdata,
   if (d_vdata != NULL)
   {
     auto* priv = NVEC_VULKAN_PRIVATE(v);
-    if constexpr (kShaderMatchesSunreal)
+    if constexpr (kShaderFloatMatchesSunreal)
     {
       priv->device_data =
         priv->manager->tensor(d_vdata, static_cast<uint32_t>(length),
-                              sizeof(ShaderFloat),
-                              kp::Memory::dataType<ShaderFloat>(),
+                              sizeof(nvvulkanrealtype),
+                              kp::Memory::dataType<nvvulkanrealtype>(),
                               kp::Memory::MemoryTypes::eDevice);
     }
     else
     {
-      std::vector<ShaderFloat> shader_init =
-        ToShaderBuffer<ShaderFloat>(HostData(v));
+      std::vector<nvvulkanrealtype> shader_init =
+        ToShaderBuffer<nvvulkanrealtype>(HostData(v));
       priv->device_data =
         priv->manager->tensor(shader_init.empty() ? nullptr : shader_init.data(),
-                              static_cast<uint32_t>(length), sizeof(ShaderFloat),
-                              kp::Memory::dataType<ShaderFloat>(),
+                              static_cast<uint32_t>(length),
+                              sizeof(nvvulkanrealtype),
+                              kp::Memory::dataType<nvvulkanrealtype>(),
                               kp::Memory::MemoryTypes::eDevice);
     }
     NVEC_VULKAN_PRIVATE(v)->device_needs_update = false;
   }
 
   return v;
-}
-
-void N_VSetHostArrayPointer_Vulkan(sunrealtype* h_vdata, N_Vector v)
-{
-  auto* priv = NVEC_VULKAN_PRIVATE(v);
-
-  if (h_vdata == nullptr)
-  {
-    priv->host_data = std::vector(NVEC_VULKAN_LENGTH(v),
-                                  static_cast<sunrealtype>(ZERO));
-  }
-  else
-  {
-    // Check if h_vdata points to our internal vector's data - if so, don't
-    // replace the variant (which would destroy the vector and make h_vdata
-    // a dangling pointer)
-    if (auto* vec = std::get_if<std::vector<sunrealtype>>(&priv->host_data))
-    {
-      if (vec->data() != h_vdata) { priv->host_data = h_vdata; }
-    }
-    else { priv->host_data = h_vdata; }
-  }
-
-  MarkDeviceNeedsUpdate(v);
-}
-
-sunrealtype* N_VGetHostArrayPointer_Vulkan(N_Vector x)
-{
-  PrivateVectorContent_Vulkan* priv = NVEC_VULKAN_PRIVATE(x);
-  if (sunrealtype* const* ptr = std::get_if<sunrealtype*>(&priv->host_data))
-  {
-    return *ptr;
-  }
-  else if (std::vector<sunrealtype>* data =
-             std::get_if<std::vector<sunrealtype>>(&priv->host_data))
-  {
-    assert(data->size() >= static_cast<size_t>(NVEC_VULKAN_LENGTH(x)));
-    return data->data();
-  }
-  else { return nullptr; }
-}
-
-sunrealtype* N_VGetDeviceArrayPointer_Vulkan(N_Vector x)
-{
-  if constexpr (kShaderMatchesSunreal)
-  {
-    auto* priv = NVEC_VULKAN_PRIVATE(x);
-    return static_cast<sunrealtype*>(priv->device_data->rawData());
-  }
-  else { return nullptr; }
 }
 
 SUNErrCode N_VSetKernelExecPolicy_Vulkan(N_Vector x,
@@ -2135,7 +2158,7 @@ N_Vector N_VClone_Vulkan(N_Vector w)
     auto hv       = HostData(v);
     std::copy(hw.begin(), hw.end(), hv.begin());
   }
-  MarkDeviceNeedsUpdate(v);
+  N_VMarkDeviceNeedsUpdate_Vulkan(v);
 
   return v;
 }
@@ -2406,7 +2429,7 @@ SUNErrCode N_VScaleAddMultiVectorArray_Vulkan(int nvec, int nsum,
         EnsureHostDataLength(Y[j][i], N);
         auto hy = HostData(Y[j][i]);
         for (sunindextype k = 0; k < N; k++) { hy[k] += a[j] * hx[k]; }
-        MarkDeviceNeedsUpdate(Y[j][i]);
+        N_VMarkDeviceNeedsUpdate_Vulkan(Y[j][i]);
       }
     }
     return SUN_SUCCESS;
@@ -2424,7 +2447,7 @@ SUNErrCode N_VScaleAddMultiVectorArray_Vulkan(int nvec, int nsum,
       const auto hy = HostData(Y[j][i]);
       auto hz       = HostData(Z[j][i]);
       for (sunindextype k = 0; k < N; k++) { hz[k] = a[j] * hx[k] + hy[k]; }
-      MarkDeviceNeedsUpdate(Z[j][i]);
+      N_VMarkDeviceNeedsUpdate_Vulkan(Z[j][i]);
     }
   }
   return SUN_SUCCESS;
@@ -2490,7 +2513,7 @@ SUNErrCode N_VLinearCombinationVectorArray_Vulkan(int nvec, int nsum,
         const auto hx = HostData(X[i][j]);
         for (sunindextype k = 0; k < N; k++) { hz[k] += c[i] * hx[k]; }
       }
-      MarkDeviceNeedsUpdate(Z[j]);
+      N_VMarkDeviceNeedsUpdate_Vulkan(Z[j]);
     }
     return SUN_SUCCESS;
   }
@@ -2510,7 +2533,7 @@ SUNErrCode N_VLinearCombinationVectorArray_Vulkan(int nvec, int nsum,
         const auto hx = HostData(X[i][j]);
         for (sunindextype k = 0; k < N; k++) { hz[k] += c[i] * hx[k]; }
       }
-      MarkDeviceNeedsUpdate(Z[j]);
+      N_VMarkDeviceNeedsUpdate_Vulkan(Z[j]);
     }
     return SUN_SUCCESS;
   }
@@ -2529,7 +2552,7 @@ SUNErrCode N_VLinearCombinationVectorArray_Vulkan(int nvec, int nsum,
       const auto hx = HostData(X[i][j]);
       for (sunindextype k = 0; k < N; k++) { hz[k] += c[i] * hx[k]; }
     }
-    MarkDeviceNeedsUpdate(Z[j]);
+    N_VMarkDeviceNeedsUpdate_Vulkan(Z[j]);
   }
   return SUN_SUCCESS;
 }
@@ -2588,7 +2611,7 @@ SUNErrCode N_VBufUnpack_Vulkan(N_Vector x, void* buf)
   EnsureHostDataLength(x, NVEC_VULKAN_LENGTH(x));
   auto hx = HostData(x);
   std::memcpy(hx.data(), buf, hx.size() * sizeof(sunrealtype));
-  MarkDeviceNeedsUpdate(x);
+  N_VMarkDeviceNeedsUpdate_Vulkan(x);
 
   return SUN_SUCCESS;
 }
@@ -2670,5 +2693,3 @@ SUNErrCode N_VEnableLinearCombinationVectorArray_Vulkan(N_Vector /*v*/,
 {
   return SUN_SUCCESS;
 }
-
-} // extern "C"
