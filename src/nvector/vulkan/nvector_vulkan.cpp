@@ -58,6 +58,15 @@ struct PrivateVectorContent_Vulkan
 
   std::shared_ptr<kp::Tensor> device_data; // device buffer that backs the vector
   bool device_needs_update = true; // host is newer and must be copied to device
+
+  // Reused reduction scratch buffers to avoid per-op tensor allocations.
+  std::shared_ptr<kp::Tensor> scratch_real_partial;
+  uint32_t scratch_real_partial_capacity = 0;
+  std::shared_ptr<kp::Tensor> scratch_real_result;
+
+  std::shared_ptr<kp::Tensor> scratch_uint_partial;
+  uint32_t scratch_uint_partial_capacity = 0;
+  std::shared_ptr<kp::Tensor> scratch_uint_result;
 };
 
 #define NVEC_VULKAN_PRIVATE(x) \
@@ -171,6 +180,50 @@ static void EnsureTensor(N_Vector v)
                               kp::Memory::dataType<nvvulkanrealtype>(),
                               kp::Memory::MemoryTypes::eDeviceAndHost);
     }
+  }
+}
+
+static void EnsureRealReductionScratch(PrivateVectorContent_Vulkan* priv,
+                                       uint32_t numGroups)
+{
+  if (!priv->scratch_real_partial ||
+      priv->scratch_real_partial_capacity < numGroups)
+  {
+    priv->scratch_real_partial =
+      priv->manager->tensor(nullptr, numGroups, sizeof(nvvulkanrealtype),
+                            kp::Memory::dataType<nvvulkanrealtype>(),
+                            kp::Memory::MemoryTypes::eDeviceAndHost);
+    priv->scratch_real_partial_capacity = numGroups;
+  }
+
+  if (!priv->scratch_real_result)
+  {
+    priv->scratch_real_result =
+      priv->manager->tensor(nullptr, 1, sizeof(nvvulkanrealtype),
+                            kp::Memory::dataType<nvvulkanrealtype>(),
+                            kp::Memory::MemoryTypes::eDeviceAndHost);
+  }
+}
+
+static void EnsureUIntReductionScratch(PrivateVectorContent_Vulkan* priv,
+                                       uint32_t numGroups)
+{
+  if (!priv->scratch_uint_partial ||
+      priv->scratch_uint_partial_capacity < numGroups)
+  {
+    priv->scratch_uint_partial =
+      priv->manager->tensor(nullptr, numGroups, sizeof(uint32_t),
+                            kp::Memory::dataType<uint32_t>(),
+                            kp::Memory::MemoryTypes::eDeviceAndHost);
+    priv->scratch_uint_partial_capacity = numGroups;
+  }
+
+  if (!priv->scratch_uint_result)
+  {
+    priv->scratch_uint_result =
+      priv->manager->tensor(nullptr, 1, sizeof(uint32_t),
+                            kp::Memory::dataType<uint32_t>(),
+                            kp::Memory::MemoryTypes::eDeviceAndHost);
   }
 }
 
@@ -1295,17 +1348,10 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
   assert(blockSize == kLocalSizes[0] &&
          "reduce_exec_policy blockSize must match shader LOCAL_SIZE_X");
 
-  // Create tensor for partial sums (one per workgroup)
-  auto partialSumsTensor =
-    privX->manager->tensor(nullptr, numGroups, sizeof(nvvulkanrealtype),
-                           kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDeviceAndHost);
-
-  // Create tensor for final result (single element)
-  auto resultTensor =
-    privX->manager->tensor(nullptr, 1, sizeof(nvvulkanrealtype),
-                           kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDeviceAndHost);
+  EnsureRealReductionScratch(privX, numGroups);
+  auto partialSumsTensor = privX->scratch_real_partial;
+  auto resultTensor      = privX->scratch_real_result;
+  auto seq               = privX->manager->sequence();
 
   // First pass: compute partial sums per workgroup
   {
@@ -1329,13 +1375,10 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
     std::vector<uint8_t> pushConstants(sizeof(Push));
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
-    auto seq = privX->manager->sequence();
-
     auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->eval();
   }
 
   // Second pass: reduce partial sums to final result
@@ -1359,14 +1402,12 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
     std::vector<uint8_t> pushConstants(sizeof(Push));
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
-    auto seq = privX->manager->sequence();
-
     auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->eval();
   }
+  seq->eval();
 
   // Read result back
   nvvulkanrealtype result = resultTensor->data<nvvulkanrealtype>()[0];
@@ -1389,17 +1430,10 @@ static sunrealtype DispatchMaxNormReduction(N_Vector x)
   assert(blockSize == kLocalSizes[0] &&
          "reduce_exec_policy blockSize must match shader LOCAL_SIZE_X");
 
-  // Create tensor for partial max values (one per workgroup)
-  auto partialMaxTensor =
-    privX->manager->tensor(nullptr, numGroups, sizeof(nvvulkanrealtype),
-                           kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDeviceAndHost);
-
-  // Create tensor for final result (single element)
-  auto resultTensor =
-    privX->manager->tensor(nullptr, 1, sizeof(nvvulkanrealtype),
-                           kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDeviceAndHost);
+  EnsureRealReductionScratch(privX, numGroups);
+  auto partialMaxTensor = privX->scratch_real_partial;
+  auto resultTensor     = privX->scratch_real_result;
+  auto seq              = privX->manager->sequence();
 
   // First pass: compute partial max per workgroup
   {
@@ -1422,13 +1456,10 @@ static sunrealtype DispatchMaxNormReduction(N_Vector x)
     std::vector<uint8_t> pushConstants(sizeof(Push));
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
-    auto seq = privX->manager->sequence();
-
     auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->eval();
   }
 
   // Second pass: reduce partial max values to final result
@@ -1452,14 +1483,12 @@ static sunrealtype DispatchMaxNormReduction(N_Vector x)
     std::vector<uint8_t> pushConstants(sizeof(Push));
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
-    auto seq = privX->manager->sequence();
-
     auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->eval();
   }
+  seq->eval();
 
   // Read result back
   nvvulkanrealtype result = resultTensor->data<nvvulkanrealtype>()[0];
@@ -1486,15 +1515,10 @@ static sunrealtype DispatchWSqrSumReduction(N_Vector x, N_Vector w, N_Vector id,
   assert(blockSize == kLocalSizes[0] &&
          "reduce_exec_policy blockSize must match shader LOCAL_SIZE_X");
 
-  auto partialSumsTensor =
-    privX->manager->tensor(nullptr, numGroups, sizeof(nvvulkanrealtype),
-                           kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDeviceAndHost);
-
-  auto resultTensor =
-    privX->manager->tensor(nullptr, 1, sizeof(nvvulkanrealtype),
-                           kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDeviceAndHost);
+  EnsureRealReductionScratch(privX, numGroups);
+  auto partialSumsTensor = privX->scratch_real_partial;
+  auto resultTensor      = privX->scratch_real_result;
+  auto seq               = privX->manager->sequence();
 
   // First pass
   {
@@ -1521,13 +1545,10 @@ static sunrealtype DispatchWSqrSumReduction(N_Vector x, N_Vector w, N_Vector id,
     std::vector<uint8_t> pushConstants(sizeof(Push));
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
-    auto seq = privX->manager->sequence();
-
     auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->eval();
   }
 
   // Second pass
@@ -1551,14 +1572,12 @@ static sunrealtype DispatchWSqrSumReduction(N_Vector x, N_Vector w, N_Vector id,
     std::vector<uint8_t> pushConstants(sizeof(Push));
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
-    auto seq = privX->manager->sequence();
-
     auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->eval();
   }
+  seq->eval();
 
   nvvulkanrealtype result = resultTensor->data<nvvulkanrealtype>()[0];
   return static_cast<sunrealtype>(result);
@@ -1582,15 +1601,10 @@ static sunrealtype DispatchMinQuotientReduction(N_Vector num, N_Vector denom)
   assert(blockSize == kLocalSizes[0] &&
          "reduce_exec_policy blockSize must match shader LOCAL_SIZE_X");
 
-  auto partialMinTensor =
-    privN->manager->tensor(nullptr, numGroups, sizeof(nvvulkanrealtype),
-                           kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDeviceAndHost);
-
-  auto resultTensor =
-    privN->manager->tensor(nullptr, 1, sizeof(nvvulkanrealtype),
-                           kp::Memory::dataType<nvvulkanrealtype>(),
-                           kp::Memory::MemoryTypes::eDeviceAndHost);
+  EnsureRealReductionScratch(privN, numGroups);
+  auto partialMinTensor = privN->scratch_real_partial;
+  auto resultTensor     = privN->scratch_real_result;
+  auto seq              = privN->manager->sequence();
 
   // First pass
   {
@@ -1614,13 +1628,10 @@ static sunrealtype DispatchMinQuotientReduction(N_Vector num, N_Vector denom)
     std::vector<uint8_t> pushConstants(sizeof(Push));
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
-    auto seq = privN->manager->sequence();
-
     auto algo = privN->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->eval();
   }
 
   // Second pass
@@ -1644,14 +1655,12 @@ static sunrealtype DispatchMinQuotientReduction(N_Vector num, N_Vector denom)
     std::vector<uint8_t> pushConstants(sizeof(Push));
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
-    auto seq = privN->manager->sequence();
-
     auto algo = privN->manager->algorithm(memObjects, spirv, {1, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->eval();
   }
+  seq->eval();
 
   nvvulkanrealtype result = resultTensor->data<nvvulkanrealtype>()[0];
 
@@ -1684,15 +1693,10 @@ static sunbooleantype DispatchInvTest(N_Vector x, N_Vector z)
   auto* stream_policy      = NVEC_VULKAN_CONTENT(x)->stream_exec_policy;
   const uint32_t numGroups = stream_policy->gridSize(n);
 
-  // Tensor for per-workgroup zero flags
-  auto hasZeroTensor = privX->manager->tensor(nullptr, numGroups,
-                                              sizeof(uint32_t),
-                                              kp::Memory::dataType<uint32_t>(),
-                                              kp::Memory::MemoryTypes::eDeviceAndHost);
-
-  auto resultTensor = privX->manager->tensor(nullptr, 1, sizeof(uint32_t),
-                                             kp::Memory::dataType<uint32_t>(),
-                                             kp::Memory::MemoryTypes::eDeviceAndHost);
+  EnsureUIntReductionScratch(privX, numGroups);
+  auto hasZeroTensor = privX->scratch_uint_partial;
+  auto resultTensor  = privX->scratch_uint_result;
+  auto seq           = privX->manager->sequence();
 
   // First pass: compute inverses and flag zeros
   {
@@ -1716,13 +1720,10 @@ static sunbooleantype DispatchInvTest(N_Vector x, N_Vector z)
     std::vector<uint8_t> pushConstants(sizeof(Push));
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
-    auto seq = privX->manager->sequence();
-
     auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->eval();
   }
 
   // Second pass: reduce OR of flags
@@ -1746,14 +1747,12 @@ static sunbooleantype DispatchInvTest(N_Vector x, N_Vector z)
     std::vector<uint8_t> pushConstants(sizeof(Push));
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
-    auto seq = privX->manager->sequence();
-
     auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->eval();
   }
+  seq->eval();
 
   // Z result is in shared memory, defer host_data update
   privZ->device_needs_update = false;
@@ -1779,14 +1778,10 @@ static sunbooleantype DispatchConstrMask(N_Vector c, N_Vector x, N_Vector m)
   auto* stream_policy      = NVEC_VULKAN_CONTENT(x)->stream_exec_policy;
   const uint32_t numGroups = stream_policy->gridSize(n);
 
-  auto hasViolationTensor =
-    privX->manager->tensor(nullptr, numGroups, sizeof(uint32_t),
-                           kp::Memory::dataType<uint32_t>(),
-                           kp::Memory::MemoryTypes::eDeviceAndHost);
-
-  auto resultTensor = privX->manager->tensor(nullptr, 1, sizeof(uint32_t),
-                                             kp::Memory::dataType<uint32_t>(),
-                                             kp::Memory::MemoryTypes::eDeviceAndHost);
+  EnsureUIntReductionScratch(privX, numGroups);
+  auto hasViolationTensor = privX->scratch_uint_partial;
+  auto resultTensor       = privX->scratch_uint_result;
+  auto seq                = privX->manager->sequence();
 
   // First pass: check constraints and set mask
   {
@@ -1811,13 +1806,10 @@ static sunbooleantype DispatchConstrMask(N_Vector c, N_Vector x, N_Vector m)
     std::vector<uint8_t> pushConstants(sizeof(Push));
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
-    auto seq = privX->manager->sequence();
-
     auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->eval();
   }
 
   // Second pass: reduce OR of violation flags
@@ -1841,14 +1833,12 @@ static sunbooleantype DispatchConstrMask(N_Vector c, N_Vector x, N_Vector m)
     std::vector<uint8_t> pushConstants(sizeof(Push));
     std::memcpy(pushConstants.data(), &push, sizeof(Push));
 
-    auto seq = privX->manager->sequence();
-
     auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
                                           std::vector<uint32_t>{}, pushConstants);
 
     seq->record<kp::OpAlgoDispatch>(algo);
-    seq->eval();
   }
+  seq->eval();
 
   // M result is in shared memory, defer host_data update
   privM->device_needs_update = false;
