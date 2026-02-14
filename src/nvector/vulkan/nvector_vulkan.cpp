@@ -18,11 +18,13 @@
 #include <iterator>
 #include <memory>
 #include <new>
+#include <cstdint>
 #include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -44,6 +46,58 @@
 
 using namespace sundials;
 using namespace sundials::vulkan;
+
+enum class CachedKernel : uint32_t
+{
+  Elementwise      = 1,
+  DotProdPass1     = 2,
+  FinalSumReduce   = 3,
+  MaxNormPass1     = 4,
+  FinalMaxReduce   = 5,
+  WSqrSumPass1     = 6,
+  MinQuotientPass1 = 7,
+  FinalMinReduce   = 8,
+  InvTestPass1     = 9,
+  FinalOrReduce    = 10,
+  ConstrMaskPass1  = 11,
+  ScaleAdd         = 12
+};
+
+struct AlgoCacheKey
+{
+  uint32_t kernel = 0;
+  uint32_t group_x = 0;
+  uint32_t group_y = 0;
+  uint32_t group_z = 0;
+  uint32_t mem_count = 0;
+  std::array<uintptr_t, 4> mem_ids{};
+
+  bool operator==(const AlgoCacheKey& other) const = default;
+};
+
+struct AlgoCacheKeyHash
+{
+  size_t operator()(const AlgoCacheKey& key) const noexcept
+  {
+    auto combine = [](size_t seed, size_t value) {
+      return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+    };
+
+    size_t h = 0;
+    h        = combine(h, std::hash<uint32_t>{}(key.kernel));
+    h        = combine(h, std::hash<uint32_t>{}(key.group_x));
+    h        = combine(h, std::hash<uint32_t>{}(key.group_y));
+    h        = combine(h, std::hash<uint32_t>{}(key.group_z));
+    h        = combine(h, std::hash<uint32_t>{}(key.mem_count));
+    for (size_t i = 0; i < key.mem_count; ++i)
+    {
+      h = combine(h, std::hash<uintptr_t>{}(key.mem_ids[i]));
+    }
+    return h;
+  }
+};
+
+static constexpr size_t kAlgoCacheLimit = 64;
 
 // Macros to access vector content
 #define NVEC_VULKAN_CONTENT(x) ((N_VectorContent_Vulkan)(x->content))
@@ -67,6 +121,10 @@ struct PrivateVectorContent_Vulkan
   std::shared_ptr<kp::Tensor> scratch_uint_partial;
   uint32_t scratch_uint_partial_capacity = 0;
   std::shared_ptr<kp::Tensor> scratch_uint_result;
+
+  std::unordered_map<AlgoCacheKey, std::shared_ptr<kp::Algorithm>,
+                     AlgoCacheKeyHash>
+    algo_cache;
 };
 
 #define NVEC_VULKAN_PRIVATE(x) \
@@ -225,6 +283,61 @@ static void EnsureUIntReductionScratch(PrivateVectorContent_Vulkan* priv,
                             kp::Memory::dataType<uint32_t>(),
                             kp::Memory::MemoryTypes::eDeviceAndHost);
   }
+}
+
+static AlgoCacheKey MakeAlgoCacheKey(
+  CachedKernel kernel, const std::vector<std::shared_ptr<kp::Memory>>& memObjects,
+  const std::array<uint32_t, 3>& workgroup)
+{
+  AlgoCacheKey key;
+  key.kernel    = static_cast<uint32_t>(kernel);
+  key.group_x   = workgroup[0];
+  key.group_y   = workgroup[1];
+  key.group_z   = workgroup[2];
+  key.mem_count = static_cast<uint32_t>(
+    std::min<size_t>(key.mem_ids.size(), memObjects.size()));
+
+  for (size_t i = 0; i < key.mem_count; ++i)
+  {
+    key.mem_ids[i] = reinterpret_cast<uintptr_t>(memObjects[i].get());
+  }
+  return key;
+}
+
+template<typename PushT>
+static std::shared_ptr<kp::Algorithm> GetOrCreateCachedAlgorithm(
+  PrivateVectorContent_Vulkan* priv, CachedKernel kernel,
+  const std::vector<std::shared_ptr<kp::Memory>>& memObjects,
+  const std::vector<uint32_t>& spirv, const std::array<uint32_t, 3>& workgroup,
+  const PushT& push)
+{
+  AlgoCacheKey key = MakeAlgoCacheKey(kernel, memObjects, workgroup);
+
+  std::vector<uint8_t> pushConstants(sizeof(PushT));
+  std::memcpy(pushConstants.data(), &push, sizeof(PushT));
+
+  auto it = priv->algo_cache.find(key);
+  if (it == priv->algo_cache.end())
+  {
+    auto algo = priv->manager->algorithm(memObjects, spirv, workgroup,
+                                         std::vector<uint32_t>{},
+                                         pushConstants);
+
+    // Keep this bounded so cached algorithms do not retain too many old tensors.
+    if (priv->algo_cache.size() >= kAlgoCacheLimit) { priv->algo_cache.clear(); }
+
+    it = priv->algo_cache.emplace(std::move(key), std::move(algo)).first;
+  }
+  else
+  {
+    // Keep dynamic dispatch state up to date for reused algorithms.
+    it->second->setWorkgroup(workgroup, 1);
+    it->second->setPushConstants(pushConstants.data(),
+                                 static_cast<uint32_t>(pushConstants.size()),
+                                 sizeof(uint8_t));
+  }
+
+  return it->second;
 }
 
 void N_VSetHostArrayPointer_Vulkan(sunrealtype* h_vdata, N_Vector v)
@@ -1310,13 +1423,10 @@ static void DispatchElementwise(ElementwiseOp op, sunrealtype a, sunrealtype b,
   Push push{static_cast<uint32_t>(op), static_cast<float>(a),
             static_cast<float>(b), static_cast<uint32_t>(NVEC_VULKAN_LENGTH(z))};
 
-  std::vector<uint8_t> pushConstants(sizeof(Push));
-  std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
   auto stream_policy = NVEC_VULKAN_CONTENT(z)->stream_exec_policy;
-  auto algo          = privZ->manager->algorithm(memObjects, spirv,
-                                                 {stream_policy->gridSize(push.n), 1, 1},
-                                                 std::vector<uint32_t>{}, pushConstants);
+  std::array<uint32_t, 3> workgroup{stream_policy->gridSize(push.n), 1, 1};
+  auto algo = GetOrCreateCachedAlgorithm(privZ, CachedKernel::Elementwise,
+                                         memObjects, spirv, workgroup, push);
 
   seq->record<kp::OpAlgoDispatch>(algo);
   seq->eval();
@@ -1372,11 +1482,9 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
 
     Push push{n, numGroups, 0, 0};
 
-    std::vector<uint8_t> pushConstants(sizeof(Push));
-    std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
-    auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
-                                          std::vector<uint32_t>{}, pushConstants);
+    auto algo = GetOrCreateCachedAlgorithm(privX, CachedKernel::DotProdPass1,
+                                           memObjects, spirv,
+                                           {numGroups, 1, 1}, push);
 
     seq->record<kp::OpAlgoDispatch>(algo);
   }
@@ -1399,11 +1507,8 @@ static sunrealtype DispatchDotProdReduction(N_Vector x, N_Vector y)
 
     Push push{numGroups, 0, 0, 0};
 
-    std::vector<uint8_t> pushConstants(sizeof(Push));
-    std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
-    auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
-                                          std::vector<uint32_t>{}, pushConstants);
+    auto algo = GetOrCreateCachedAlgorithm(privX, CachedKernel::FinalSumReduce,
+                                           memObjects, spirv, {1, 1, 1}, push);
 
     seq->record<kp::OpAlgoDispatch>(algo);
   }
@@ -1453,11 +1558,9 @@ static sunrealtype DispatchMaxNormReduction(N_Vector x)
 
     Push push{n, numGroups, 0, 0};
 
-    std::vector<uint8_t> pushConstants(sizeof(Push));
-    std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
-    auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
-                                          std::vector<uint32_t>{}, pushConstants);
+    auto algo = GetOrCreateCachedAlgorithm(privX, CachedKernel::MaxNormPass1,
+                                           memObjects, spirv,
+                                           {numGroups, 1, 1}, push);
 
     seq->record<kp::OpAlgoDispatch>(algo);
   }
@@ -1480,11 +1583,8 @@ static sunrealtype DispatchMaxNormReduction(N_Vector x)
 
     Push push{numGroups, 0, 0, 0};
 
-    std::vector<uint8_t> pushConstants(sizeof(Push));
-    std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
-    auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
-                                          std::vector<uint32_t>{}, pushConstants);
+    auto algo = GetOrCreateCachedAlgorithm(privX, CachedKernel::FinalMaxReduce,
+                                           memObjects, spirv, {1, 1, 1}, push);
 
     seq->record<kp::OpAlgoDispatch>(algo);
   }
@@ -1542,11 +1642,9 @@ static sunrealtype DispatchWSqrSumReduction(N_Vector x, N_Vector w, N_Vector id,
 
     Push push{n, numGroups, useMask ? 1u : 0u, 0};
 
-    std::vector<uint8_t> pushConstants(sizeof(Push));
-    std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
-    auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
-                                          std::vector<uint32_t>{}, pushConstants);
+    auto algo = GetOrCreateCachedAlgorithm(privX, CachedKernel::WSqrSumPass1,
+                                           memObjects, spirv,
+                                           {numGroups, 1, 1}, push);
 
     seq->record<kp::OpAlgoDispatch>(algo);
   }
@@ -1569,11 +1667,8 @@ static sunrealtype DispatchWSqrSumReduction(N_Vector x, N_Vector w, N_Vector id,
 
     Push push{numGroups, 0, 0, 0};
 
-    std::vector<uint8_t> pushConstants(sizeof(Push));
-    std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
-    auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
-                                          std::vector<uint32_t>{}, pushConstants);
+    auto algo = GetOrCreateCachedAlgorithm(privX, CachedKernel::FinalSumReduce,
+                                           memObjects, spirv, {1, 1, 1}, push);
 
     seq->record<kp::OpAlgoDispatch>(algo);
   }
@@ -1625,11 +1720,9 @@ static sunrealtype DispatchMinQuotientReduction(N_Vector num, N_Vector denom)
 
     Push push{n, numGroups, 0, 0};
 
-    std::vector<uint8_t> pushConstants(sizeof(Push));
-    std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
-    auto algo = privN->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
-                                          std::vector<uint32_t>{}, pushConstants);
+    auto algo =
+      GetOrCreateCachedAlgorithm(privN, CachedKernel::MinQuotientPass1,
+                                 memObjects, spirv, {numGroups, 1, 1}, push);
 
     seq->record<kp::OpAlgoDispatch>(algo);
   }
@@ -1652,11 +1745,8 @@ static sunrealtype DispatchMinQuotientReduction(N_Vector num, N_Vector denom)
 
     Push push{numGroups, 0, 0, 0};
 
-    std::vector<uint8_t> pushConstants(sizeof(Push));
-    std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
-    auto algo = privN->manager->algorithm(memObjects, spirv, {1, 1, 1},
-                                          std::vector<uint32_t>{}, pushConstants);
+    auto algo = GetOrCreateCachedAlgorithm(privN, CachedKernel::FinalMinReduce,
+                                           memObjects, spirv, {1, 1, 1}, push);
 
     seq->record<kp::OpAlgoDispatch>(algo);
   }
@@ -1717,11 +1807,9 @@ static sunbooleantype DispatchInvTest(N_Vector x, N_Vector z)
 
     Push push{n, numGroups, 0, 0};
 
-    std::vector<uint8_t> pushConstants(sizeof(Push));
-    std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
-    auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
-                                          std::vector<uint32_t>{}, pushConstants);
+    auto algo = GetOrCreateCachedAlgorithm(privX, CachedKernel::InvTestPass1,
+                                           memObjects, spirv,
+                                           {numGroups, 1, 1}, push);
 
     seq->record<kp::OpAlgoDispatch>(algo);
   }
@@ -1744,11 +1832,8 @@ static sunbooleantype DispatchInvTest(N_Vector x, N_Vector z)
 
     Push push{numGroups, 0, 0, 0};
 
-    std::vector<uint8_t> pushConstants(sizeof(Push));
-    std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
-    auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
-                                          std::vector<uint32_t>{}, pushConstants);
+    auto algo = GetOrCreateCachedAlgorithm(privX, CachedKernel::FinalOrReduce,
+                                           memObjects, spirv, {1, 1, 1}, push);
 
     seq->record<kp::OpAlgoDispatch>(algo);
   }
@@ -1803,11 +1888,9 @@ static sunbooleantype DispatchConstrMask(N_Vector c, N_Vector x, N_Vector m)
 
     Push push{n, numGroups, 0, 0};
 
-    std::vector<uint8_t> pushConstants(sizeof(Push));
-    std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
-    auto algo = privX->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
-                                          std::vector<uint32_t>{}, pushConstants);
+    auto algo = GetOrCreateCachedAlgorithm(privX, CachedKernel::ConstrMaskPass1,
+                                           memObjects, spirv,
+                                           {numGroups, 1, 1}, push);
 
     seq->record<kp::OpAlgoDispatch>(algo);
   }
@@ -1830,11 +1913,8 @@ static sunbooleantype DispatchConstrMask(N_Vector c, N_Vector x, N_Vector m)
 
     Push push{numGroups, 0, 0, 0};
 
-    std::vector<uint8_t> pushConstants(sizeof(Push));
-    std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
-    auto algo = privX->manager->algorithm(memObjects, spirv, {1, 1, 1},
-                                          std::vector<uint32_t>{}, pushConstants);
+    auto algo = GetOrCreateCachedAlgorithm(privX, CachedKernel::FinalOrReduce,
+                                           memObjects, spirv, {1, 1, 1}, push);
 
     seq->record<kp::OpAlgoDispatch>(algo);
   }
@@ -1880,13 +1960,10 @@ static void DispatchScaleAdd(sunrealtype c, N_Vector x, N_Vector y, N_Vector z)
 
   Push push{n, static_cast<float>(c), 0, 0};
 
-  std::vector<uint8_t> pushConstants(sizeof(Push));
-  std::memcpy(pushConstants.data(), &push, sizeof(Push));
-
   auto seq = privZ->manager->sequence();
-
-  auto algo = privZ->manager->algorithm(memObjects, spirv, {numGroups, 1, 1},
-                                        std::vector<uint32_t>{}, pushConstants);
+  auto algo = GetOrCreateCachedAlgorithm(privZ, CachedKernel::ScaleAdd,
+                                         memObjects, spirv,
+                                         {numGroups, 1, 1}, push);
 
   seq->record<kp::OpAlgoDispatch>(algo);
   seq->eval();
