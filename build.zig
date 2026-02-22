@@ -126,6 +126,53 @@ fn sundials_add_executable(
     return exe;
 }
 
+fn sundials_add_zig_executable(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    name: []const u8,
+    root_source_file: []const u8,
+    config_header: *std.Build.Step.ConfigHeader,
+    library: *std.Build.Step.Compile,
+) *std.Build.Step.Compile {
+    const exe = b.addExecutable(.{
+        .name = name,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(root_source_file),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    exe.root_module.addConfigHeader(config_header);
+    exe.root_module.addIncludePath(b.path("core/include/"));
+    exe.root_module.addCMacro("SUNDIALS_STATIC_DEFINE", "");
+    exe.root_module.linkLibrary(library);
+    exe.root_module.link_libc = true;
+
+    return exe;
+}
+
+fn create_arkode_c_module(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    config_header: *std.Build.Step.ConfigHeader,
+) *std.Build.Module {
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = b.path("arkode-c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    translate_c.addConfigHeader(config_header);
+    translate_c.addIncludePath(b.path("core/include/"));
+    translate_c.addIncludePath(b.path("extensions/vulkan_real/include/"));
+    translate_c.defineCMacro("SUNDIALS_STATIC_DEFINE", null);
+
+    return translate_c.createModule();
+}
+
 fn appendConfigDefine(allocator: std.mem.Allocator, builder: *std.ArrayList(u8), macro: []const u8) void {
     builder.print(allocator, "#define {s} 1\n", .{macro}) catch @panic("OOM");
 }
@@ -282,6 +329,27 @@ const SundialsComponent = struct {
     src_files: []const []const u8,
 };
 
+// Top-level build flow:
+// 1. `build` parses feature options, target/optimize settings, and generates
+//    `config_header` via `configHeader`/`appendConfigDefine`.
+// 2. It materializes the low-level SUNDIALS component libraries with
+//    `sundials_add_library`, which delegates source setup to
+//    `sundials_add_compile_options`.
+// 3. It then builds the aggregate `arkode` static library, links every
+//    component library into it, and installs the public headers.
+// 4. `build_examples`, `build_unit_tests`, and `build_benchmarks` are called
+//    next; each creates executables that link against `arkode`, so they depend
+//    transitively on the component libraries and generated config header.
+//    `build_unit_tests` also uses `sundials_add_zig_executable` together with
+//    `create_arkode_c_module` for the Zig complex-nvector test.
+// 5. Every compiled artifact is appended to `sundials_targets`, which is passed
+//    to `zcc.createStep("cdb", ...)` to emit compile_commands data.
+//
+// Step relationships:
+// - `zig build` builds/installs `arkode` and all declared artifacts.
+// - `zig build examples`, `zig build test`, and `zig build benchmarks` run the
+//   dedicated run steps created inside those helper functions; they do not
+//   depend on each other, but `zig build` needs to be run first.
 pub fn build(b: *std.Build) !void {
     const with_klu = b.option(bool, "with_klu", "Build KLU linear solver components and tests (requires SuiteSparse KLU)") orelse false;
     const with_superlumt = b.option(bool, "with_superlumt", "Build SuperLU_MT linear solver components and tests") orelse false;
@@ -1834,4 +1902,22 @@ fn build_unit_tests(
             run_unit_tests.dependOn(&run_unit_test.step);
         }
     }
+
+    const test_nvector_complex = sundials_add_zig_executable(
+        b,
+        target,
+        optimize,
+        "test_nvector_complex",
+        "extensions/serial_complex/test_nvector_complex.zig",
+        config_header,
+        arkode,
+    );
+    test_nvector_complex.root_module.addImport(
+        "arkode-c",
+        create_arkode_c_module(b, target, optimize, config_header),
+    );
+    b.installArtifact(test_nvector_complex);
+    const run_test_nvector_complex = b.addRunArtifact(test_nvector_complex);
+    run_test_nvector_complex.setCwd(.{ .cwd_relative = b.getInstallPath(.prefix, "") });
+    run_unit_tests.dependOn(&run_test_nvector_complex.step);
 }
