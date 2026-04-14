@@ -44,23 +44,23 @@ fn sundials_add_compile_options(
     var has_cpp = false;
     for (sources) |source| {
         if (is_c(source)) {
-            target.addCSourceFile(.{ .file = b.path(source), .flags = common_flags ++ c_flags });
+            target.root_module.addCSourceFile(.{ .file = b.path(source), .flags = common_flags ++ c_flags });
             has_c = true;
         } else {
-            target.addCSourceFile(.{ .file = b.path(source), .flags = common_flags ++ cpp_flags });
+            target.root_module.addCSourceFile(.{ .file = b.path(source), .flags = common_flags ++ cpp_flags });
             has_cpp = true;
         }
     }
 
-    target.addConfigHeader(config_header);
-    target.addIncludePath(b.path("include/"));
-    target.addIncludePath(b.path("src/sundials/"));
+    target.root_module.addConfigHeader(config_header);
+    target.root_module.addIncludePath(b.path("include/"));
+    target.root_module.addIncludePath(b.path("src/sundials/"));
 
     if (has_c) {
-        target.linkLibC();
+        target.root_module.link_libc = true;
     }
     if (has_cpp) {
-        target.linkLibCpp();
+        target.root_module.link_libcpp = true;
     }
 }
 
@@ -88,10 +88,10 @@ fn sundials_add_library(
             kompute.LogLevel.getPreprocessorDefine(kompute_log_level),
         );
         const kompute_lib = kompute_dep.artifact("kompute");
-        lib.linkLibrary(kompute_lib);
+        lib.root_module.linkLibrary(kompute_lib);
     }
     if (std.mem.indexOf(u8, name, "pthread")) |_| {
-        lib.linkSystemLibrary("pthread");
+        lib.root_module.linkSystemLibrary("pthread", .{});
     }
 
     return lib;
@@ -115,16 +115,16 @@ fn sundials_add_executable(
     });
 
     sundials_add_compile_options(b, exe, sources, config_header);
-    exe.linkLibrary(library);
+    exe.root_module.linkLibrary(library);
     if (std.mem.indexOf(u8, name, "vulkan")) |_| {
-        exe.linkSystemLibrary("vulkan");
+        exe.root_module.linkSystemLibrary("vulkan", .{});
     }
 
     return exe;
 }
 
 fn appendConfigDefine(allocator: std.mem.Allocator, builder: *std.ArrayList(u8), macro: []const u8) void {
-    builder.writer(allocator).print("#define {s} 1\n", .{macro}) catch @panic("OOM");
+    builder.print(allocator, "#define {s} 1\n", .{macro}) catch @panic("OOM");
 }
 
 fn configHeader(
@@ -525,9 +525,9 @@ pub fn build(b: *std.Build) !void {
         config_header,
     );
     for (sundials_targets.items) |sundials_lib| {
-        arkode.linkLibrary(sundials_lib);
+        arkode.root_module.linkLibrary(sundials_lib);
     }
-    arkode.installHeader(config_header.getOutput(), "sundials/sundials_config.h");
+    arkode.installHeader(config_header.getOutputFile(), "sundials/sundials_config.h");
     arkode.installHeadersDirectory(b.path("include"), "", .{});
     arkode.installLibraryHeaders(kompute_dep.artifact("kompute"));
     b.installArtifact(arkode);
@@ -593,7 +593,7 @@ fn build_benchmarks(
             config_header,
             arkode,
         );
-        exe.addIncludePath(b.path("benchmarks/nvector"));
+        exe.root_module.addIncludePath(b.path("benchmarks/nvector"));
         b.installArtifact(exe);
         sundials_exes.append(b.allocator, exe) catch @panic("OOM");
 
@@ -1064,7 +1064,7 @@ fn build_examples(
             config_header,
             arkode,
         );
-        exe.addIncludePath(b.path("examples/utilities"));
+        exe.root_module.addIncludePath(b.path("examples/utilities"));
         b.installArtifact(exe);
         sundials_exes.append(b.allocator, exe) catch @panic("OOM");
 
@@ -1804,21 +1804,21 @@ fn build_unit_tests(
 
         // adding include paths for utils needed by sundials unit test
         const main_src_file = unit_test.build_info.src_files[0];
-        exe.addIncludePath(b.path("src/"));
-        var iter = std.fs.path.componentIterator(main_src_file) catch @panic("OOM");
+        exe.root_module.addIncludePath(b.path("src/"));
+        var iter = std.fs.path.componentIterator(main_src_file);
         _ = iter.next();
         var path_component = iter.next() orelse std.debug.panic("{s} is not a unit test?", .{main_src_file});
-        exe.addIncludePath(b.path(path_component.path)); // adding "./test/unit_tests/" directory
+        exe.root_module.addIncludePath(b.path(path_component.path)); // adding "./test/unit_tests/" directory
         path_component = iter.next() orelse std.debug.panic("{s} is not a unit test?", .{main_src_file});
-        exe.addIncludePath(b.path(path_component.path)); // adding "./test/unit_tests/<test_group>/" directory
+        exe.root_module.addIncludePath(b.path(path_component.path)); // adding "./test/unit_tests/<test_group>/" directory
 
         // adding include paths for gmock needed by sundials unit test
         if (unit_test.has_main) {
-            exe.addIncludePath(googletest_dep.artifact("gmock").getEmittedIncludeTree());
-            exe.linkLibrary(googletest_dep.artifact("gmock"));
+            exe.root_module.addIncludePath(googletest_dep.artifact("gmock").getEmittedIncludeTree());
+            exe.root_module.linkLibrary(googletest_dep.artifact("gmock"));
         } else {
-            exe.addIncludePath(googletest_dep.artifact("gmock_main").getEmittedIncludeTree());
-            exe.linkLibrary(googletest_dep.artifact("gmock_main"));
+            exe.root_module.addIncludePath(googletest_dep.artifact("gmock_main").getEmittedIncludeTree());
+            exe.root_module.linkLibrary(googletest_dep.artifact("gmock_main"));
         }
 
         b.installArtifact(exe);

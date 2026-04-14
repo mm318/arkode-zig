@@ -7,8 +7,8 @@
 
     .dependencies = .{
         .kompute = .{
-            .url = "https://github.com/mm318/kompute/archive/995156a5a6858918c96660c305a893f244dc857d.tar.gz",
-            .hash = "kompute-0.9.0-3P6s7h_bBgC2rhxLk6-bHhKQ4vTgocWIlsXEk5oO0SuJ",
+            .url = "https://github.com/mm318/kompute/archive/0d848cb7b9e7ea34055ad7b62a8c313399e8ec03.tar.gz",
+            .hash = "kompute-0.9.0-3P6s7mncBgBFMP0wFxDNMxrWWauqK9ajQ2TPy6ostW-B",
         },
         .googletest = .{
             .path = "deps/googletest",
