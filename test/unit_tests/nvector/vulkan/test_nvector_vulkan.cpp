@@ -18,7 +18,7 @@
  * implementation.
  * -----------------------------------------------------------------*/
 
-#include <sundials_arkode.h>
+#include <sundials_arkode_vulkan.h>
 #include <stdio.h>
 #include <stdlib.h>
 

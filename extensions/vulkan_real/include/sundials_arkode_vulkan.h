@@ -1,11 +1,11 @@
 /*
- * Aggregate header for the Arkode-focused benchmark and unit-test executables.
- * Keep external-library-dependent headers behind the same feature macros that
- * the generated SUNDIALS config header defines.
+ * Aggregate header for Vulkan-enabled Arkode-focused benchmark and unit-test
+ * executables. This mirrors sundials_arkode.h and adds the Vulkan NVECTOR and
+ * SUNMemory public headers so Vulkan tests can rely on a single umbrella.
  */
 
-#ifndef SUNDIALS_ARKODE_H
-#define SUNDIALS_ARKODE_H
+#ifndef SUNDIALS_ARKODE_VULKAN_H
+#define SUNDIALS_ARKODE_VULKAN_H
 
 #include <sundials/sundials_config.h>
 
@@ -32,6 +32,7 @@
 #ifdef SUNDIALS_NVECTOR_MANYVECTOR
 #include <nvector/nvector_manyvector.h>
 #endif
+#include <nvector/nvector_vulkan.h>
 
 #include <sunadaptcontroller/sunadaptcontroller_imexgus.h>
 #include <sunadaptcontroller/sunadaptcontroller_mrihtol.h>
@@ -85,6 +86,7 @@
 #include <sunmatrix/sunmatrix_sparse.h>
 
 #include <sunmemory/sunmemory_system.h>
+#include <sunmemory/sunmemory_vulkan.h>
 
 #include <sunnonlinsol/sunnonlinsol_fixedpoint.h>
 #include <sunnonlinsol/sunnonlinsol_newton.h>
@@ -100,6 +102,7 @@
 #include <sundials/sundials_nonlinearsolver.hpp>
 #include <sundials/sundials_nvector.hpp>
 #include <sundials/sundials_profiler.hpp>
+#include <sundials/sundials_vulkan_policies.hpp>
 #include "sundials_reductions.hpp"
 #endif
 

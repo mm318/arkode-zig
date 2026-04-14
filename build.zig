@@ -55,6 +55,7 @@ fn sundials_add_compile_options(
     target.root_module.addConfigHeader(config_header);
     target.root_module.addIncludePath(b.path("core/include/"));
     target.root_module.addIncludePath(b.path("core/src/sundials/"));
+    target.root_module.addIncludePath(b.path("extensions/vulkan_real/include/"));
 
     if (has_c) {
         target.root_module.link_libc = true;
@@ -83,6 +84,7 @@ fn sundials_add_library(
 
     sundials_add_compile_options(b, lib, sources, config_header);
     if (std.mem.indexOf(u8, name, "vulkan")) |_| {
+        lib.root_module.addIncludePath(b.path("extensions/vulkan_real/src/sundials/"));
         lib.root_module.addCMacro(
             "KOMPUTE_OPT_ACTIVE_LOG_LEVEL",
             kompute.LogLevel.getPreprocessorDefine(kompute_log_level),
@@ -117,6 +119,7 @@ fn sundials_add_executable(
     sundials_add_compile_options(b, exe, sources, config_header);
     exe.root_module.linkLibrary(library);
     if (std.mem.indexOf(u8, name, "vulkan")) |_| {
+        exe.root_module.addIncludePath(b.path("extensions/vulkan_real/src/sundials/"));
         exe.root_module.linkSystemLibrary("vulkan", .{});
     }
 
@@ -140,7 +143,6 @@ fn configHeader(
     appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_NVECTOR_SERIAL");
     appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_NVECTOR_PTHREADS");
     appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_NVECTOR_MANYVECTOR");
-    appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_NVECTOR_VULKAN");
     appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNMATRIX_BAND");
     appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNMATRIX_DENSE");
     appendConfigDefine(b.allocator, &config_builds, "SUNDIALS_SUNMATRIX_SPARSE");
@@ -345,7 +347,7 @@ pub fn build(b: *std.Build) !void {
         },
         .{
             .name = "sundials_sunmemvulkan",
-            .src_files = &.{"core/src/sunmemory/vulkan/sundials_vulkan_memory.cpp"},
+            .src_files = &.{"extensions/vulkan_real/src/sunmemory/vulkan/sundials_vulkan_memory.cpp"},
         },
         .{
             .name = "sundials_nvecmanyvector",
@@ -361,7 +363,7 @@ pub fn build(b: *std.Build) !void {
         },
         .{
             .name = "sundials_nvecvulkan",
-            .src_files = &.{"core/src/nvector/vulkan/nvector_vulkan.cpp"},
+            .src_files = &.{"extensions/vulkan_real/src/nvector/vulkan/nvector_vulkan.cpp"},
         },
         .{
             .name = "sundials_sunmatrixband",
@@ -529,6 +531,7 @@ pub fn build(b: *std.Build) !void {
     }
     arkode.installHeader(config_header.getOutputFile(), "sundials/sundials_config.h");
     arkode.installHeadersDirectory(b.path("core/include"), "", .{});
+    arkode.installHeadersDirectory(b.path("extensions/vulkan_real/include"), "", .{});
     arkode.installLibraryHeaders(kompute_dep.artifact("kompute"));
     b.installArtifact(arkode);
     sundials_targets.append(b.allocator, arkode) catch @panic("OOM");
