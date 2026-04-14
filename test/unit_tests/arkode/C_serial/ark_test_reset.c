@@ -34,16 +34,9 @@
  *-----------------------------------------------------------------*/
 
 /* Header files */
-#include <arkode/arkode_arkstep.h>
-#include <arkode/arkode_erkstep.h>
-#include <arkode/arkode_mristep.h>
+#include <sundials_arkode.h>
 #include <math.h>
-#include <nvector/nvector_serial.h>
 #include <stdio.h>
-#include <sundials/sundials_math.h>
-#include <sundials/sundials_types.h>
-#include <sunlinsol/sunlinsol_dense.h>
-#include <sunmatrix/sunmatrix_dense.h>
 
 #if defined(SUNDIALS_EXTENDED_PRECISION)
 #define GSYM "Lg"

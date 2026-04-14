@@ -21,12 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "arkode/arkode_arkstep.h"
-#include "nvector/nvector_serial.h"
-#include "sundials/sundials_math.h"
-#include "sunlinsol/sunlinsol_dense.h"
-#include "sunmatrix/sunmatrix_dense.h"
-#include "sunnonlinsol/sunnonlinsol_newton.h"
+#include <sundials_arkode.h>
 
 /* A simple nonlinear RHS function */
 static int f_explicit(sunrealtype t, N_Vector y, N_Vector ydot, void* user_data)

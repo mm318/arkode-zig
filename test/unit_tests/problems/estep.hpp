@@ -35,7 +35,7 @@
 #ifndef ESTEP_HPP_
 #define ESTEP_HPP_
 
-#include <sundials/sundials_core.hpp>
+#include <sundials_arkode.h>
 
 namespace problems {
 namespace estep {

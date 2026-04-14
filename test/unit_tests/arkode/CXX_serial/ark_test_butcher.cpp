@@ -19,12 +19,9 @@
  *-----------------------------------------------------------------*/
 
 // Header files
-#include <arkode/arkode.h>
-#include <arkode/arkode_butcher_dirk.h>
-#include <arkode/arkode_butcher_erk.h>
+#include <sundials_arkode.h>
 #include <iostream>
 #include <ostream>
-#include <sundials/sundials_types.h>
 #include <vector>
 
 #include "arkode/arkode_impl.h"

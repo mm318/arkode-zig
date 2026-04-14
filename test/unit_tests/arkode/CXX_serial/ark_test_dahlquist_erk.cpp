@@ -20,16 +20,12 @@
  * ---------------------------------------------------------------------------*/
 
 // Header files
-#include <arkode/arkode_erkstep.h>
+#include <sundials_arkode.h>
 #include <cmath>
 #include <cstdio>
 #include <iomanip>
 #include <iostream>
-#include <nvector/nvector_serial.h>
 #include <string>
-#include <sundials/sundials_core.hpp>
-
-#include "arkode/arkode_butcher.h"
 
 // Constants
 #define NEG_ONE SUN_RCONST(-1.0)

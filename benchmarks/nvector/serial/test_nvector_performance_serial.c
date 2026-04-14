@@ -18,12 +18,10 @@
  * serial NVECTOR module implementation.
  * -----------------------------------------------------------------*/
 
-#include <nvector/nvector_serial.h>
+#include <sundials_arkode.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sundials/sundials_math.h>
-#include <sundials/sundials_types.h>
 
 #include "test_nvector_performance.h"
 

@@ -18,7 +18,7 @@
 
 #include <fstream>
 #include <string>
-#include <sundials/sundials_core.hpp>
+#include <sundials_arkode.h>
 
 static std::string dumpstderr(SUNContext sunctx, const std::string& errfile)
 {

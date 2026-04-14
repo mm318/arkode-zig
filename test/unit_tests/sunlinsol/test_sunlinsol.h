@@ -21,7 +21,7 @@
  */
 
 #include <math.h>
-#include <sundials/sundials_core.h>
+#include <sundials_arkode.h>
 
 /* define constants */
 #define ZERO SUN_RCONST(0.0)

@@ -24,17 +24,7 @@
 #include <limits>
 
 // Include desired integrators, vectors, linear solvers, and nonlinear solvers
-#include "arkode/arkode_arkstep.h"
-#include "nvector/nvector_serial.h"
-#include "sundials/sundials_context.hpp"
-#include "sundials/sundials_iterative.h"
-#include "sundials/sundials_logger.h"
-#include "sundials/sundials_matrix.h"
-#include "sundials/sundials_nonlinearsolver.h"
-#include "sunlinsol/sunlinsol_dense.h"
-#include "sunlinsol/sunlinsol_spgmr.h"
-#include "sunmatrix/sunmatrix_dense.h"
-#include "sunnonlinsol/sunnonlinsol_fixedpoint.h"
+#include <sundials_arkode.h>
 
 #include "problems/kpr.hpp"
 #include "utilities/check_return.hpp"

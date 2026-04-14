@@ -20,7 +20,7 @@
 
 #define SUNDIALS_HOST_DEVICE
 #define SUNDIALS_DEVICE_INLINE
-#include "sundials/sundials_reductions.hpp"
+#include <sundials_arkode.h>
 
 using namespace sundials::reductions;
 using namespace sundials::reductions::impl;

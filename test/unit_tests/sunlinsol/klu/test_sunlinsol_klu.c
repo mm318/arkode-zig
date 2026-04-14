@@ -20,14 +20,9 @@
  * -----------------------------------------------------------------
  */
 
-#include <nvector/nvector_serial.h>
+#include <sundials_arkode.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sundials/sundials_math.h>
-#include <sundials/sundials_types.h>
-#include <sunlinsol/sunlinsol_klu.h>
-#include <sunmatrix/sunmatrix_dense.h>
-#include <sunmatrix/sunmatrix_sparse.h>
 
 #include "test_sunlinsol.h"
 

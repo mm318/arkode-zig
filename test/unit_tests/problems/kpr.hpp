@@ -40,7 +40,7 @@
 #define KPR_HPP_
 
 #include <cmath>
-#include <sunmatrix/sunmatrix_dense.h>
+#include <sundials_arkode.h>
 
 namespace problems {
 namespace kpr {

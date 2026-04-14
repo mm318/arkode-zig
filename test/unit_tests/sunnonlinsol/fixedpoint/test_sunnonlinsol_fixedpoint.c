@@ -34,10 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "nvector/nvector_serial.h"
-#include "sundials/sundials_math.h"
-#include "sundials/sundials_types.h"
-#include "sunnonlinsol/sunnonlinsol_fixedpoint.h"
+#include <sundials_arkode.h>
 
 /* precision specific formatting macros */
 #if defined(SUNDIALS_EXTENDED_PRECISION)

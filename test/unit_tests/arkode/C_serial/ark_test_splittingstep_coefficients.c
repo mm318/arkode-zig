@@ -21,8 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "arkode/arkode_splittingstep.h"
-#include "sundials/sundials_math.h"
+#include <sundials_arkode.h>
 
 #define ZERO SUN_RCONST(0.0)
 #define ONE  SUN_RCONST(1.0)

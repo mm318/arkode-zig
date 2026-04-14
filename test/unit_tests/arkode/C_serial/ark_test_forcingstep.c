@@ -18,9 +18,7 @@
  * ForcingStep module.
  * ---------------------------------------------------------------------------*/
 
-#include <arkode/arkode_erkstep.h>
-#include <arkode/arkode_forcingstep.h>
-#include <nvector/nvector_serial.h>
+#include <sundials_arkode.h>
 
 #if defined(SUNDIALS_EXTENDED_PRECISION)
 #define GSYM "Lg"

@@ -28,13 +28,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "arkode/arkode_arkstep.h"
+#include <sundials_arkode.h>
 #include "arkode/arkode_arkstep_impl.h"
-#include "nvector/nvector_serial.h"
-#include "sundials/sundials_math.h"
-#include "sundials/sundials_types.h"
-#include "sunlinsol/sunlinsol_dense.h"
-#include "sunmatrix/sunmatrix_dense.h"
 
 #if defined(SUNDIALS_EXTENDED_PRECISION)
 #define GSYM "Lg"

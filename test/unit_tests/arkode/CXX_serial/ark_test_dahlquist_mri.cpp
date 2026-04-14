@@ -20,19 +20,14 @@
  * ---------------------------------------------------------------------------*/
 
 // Header files
-#include <arkode/arkode_arkstep.h>
-#include <arkode/arkode_mristep.h>
+#include <sundials_arkode.h>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <map>
-#include <nvector/nvector_serial.h>
 #include <string>
-#include <sundials/sundials_core.hpp>
-#include <sunlinsol/sunlinsol_dense.h>
-#include <sunmatrix/sunmatrix_dense.h>
 
 #include "arkode/arkode_mri_tables_impl.h"
 

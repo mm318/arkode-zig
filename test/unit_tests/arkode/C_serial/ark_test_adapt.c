@@ -21,8 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "arkode/arkode_erkstep.h"
-#include "nvector/nvector_serial.h"
+#include <sundials_arkode.h>
 
 /* If an error occurs, print to stderr and exit */
 static void err_fn(const int line, const char* const func, const char* const file,

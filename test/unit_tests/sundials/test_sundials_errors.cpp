@@ -17,17 +17,11 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <iostream>
-#include <nvector/nvector_serial.h>
+#include <sundials_arkode.h>
 #include <string>
 #include <sundials/priv/sundials_errors_impl.h>
-#include <sundials/sundials_core.h>
-#include <sundials/sundials_nvector.h>
 
 #include "../utilities/dumpstderr.hpp"
-#include "sundials/sundials_context.h"
-#include "sundials/sundials_errors.h"
-#include "sundials/sundials_logger.h"
-#include "sundials/sundials_types.h"
 
 static const std::string errfile{"test_sundials_errors.err"};
 

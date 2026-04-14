@@ -21,7 +21,7 @@
  * ----------------------------------------------------------------- */
 
 #include <stdio.h>
-#include <sundials/sundials_matrix.h>
+#include <sundials_arkode.h>
 
 #ifndef _DREADRB_H_
 #define _DREADRB_H_

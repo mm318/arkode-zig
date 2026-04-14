@@ -24,8 +24,7 @@
 #ifndef _LOTKA_VOLTERRA_HPP
 #define _LOTKA_VOLTERRA_HPP
 
-#include <sundials/sundials_core.hpp>
-#include <sunmatrix/sunmatrix_dense.h>
+#include <sundials_arkode.h>
 
 namespace problems {
 namespace lotka_volterra {

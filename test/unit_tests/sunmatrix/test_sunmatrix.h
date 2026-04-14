@@ -22,7 +22,7 @@
  */
 
 #include <math.h>
-#include <sundials/sundials_core.h>
+#include <sundials_arkode.h>
 
 /* define constants */
 #define NEG_TWO  SUN_RCONST(-2.0)

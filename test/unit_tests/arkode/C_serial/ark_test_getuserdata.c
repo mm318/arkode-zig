@@ -20,10 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "arkode/arkode_arkstep.h"
-#include "arkode/arkode_erkstep.h"
-#include "arkode/arkode_mristep.h"
-#include "nvector/nvector_serial.h"
+#include <sundials_arkode.h>
 
 #define ZERO SUN_RCONST(0.0)
 #define ONE  SUN_RCONST(1.0)

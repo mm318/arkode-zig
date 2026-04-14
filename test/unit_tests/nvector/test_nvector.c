@@ -22,7 +22,7 @@
  * implementation.
  * -----------------------------------------------------------------*/
 
-#include <sundials/sundials_config.h>
+#include <sundials_arkode.h>
 
 /* POSIX timers */
 #if defined(SUNDIALS_HAVE_POSIX_TIMERS)
@@ -33,8 +33,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <sundials/sundials_math.h>
-#include <sundials/sundials_nvector.h>
 
 #include "test_nvector.h"
 

@@ -53,8 +53,8 @@ fn sundials_add_compile_options(
     }
 
     target.root_module.addConfigHeader(config_header);
-    target.root_module.addIncludePath(b.path("include/"));
-    target.root_module.addIncludePath(b.path("src/sundials/"));
+    target.root_module.addIncludePath(b.path("core/include/"));
+    target.root_module.addIncludePath(b.path("core/src/sundials/"));
 
     if (has_c) {
         target.root_module.link_libc = true;
@@ -165,7 +165,7 @@ fn configHeader(
     }
 
     return b.addConfigHeader(.{
-        .style = .{ .cmake = b.path("include/sundials/sundials_config.in") },
+        .style = .{ .cmake = b.path("core/include/sundials/sundials_config.in") },
         .include_path = "sundials/sundials_config.h",
     }, .{
         .SUNDIALS_DEPRECATED_MSG_MACRO = "__attribute__ ((__deprecated__(msg)))",
@@ -311,152 +311,152 @@ pub fn build(b: *std.Build) !void {
         .{
             .name = "sundials_core",
             .src_files = &.{
-                "src/sundials/sundatanode/sundatanode_inmem.c",
-                "src/sundials/sundials_adaptcontroller.c",
-                "src/sundials/sundials_adjointcheckpointscheme.c",
-                "src/sundials/sundials_adjointstepper.c",
-                "src/sundials/sundials_band.c",
-                "src/sundials/sundials_cli.c",
-                "src/sundials/sundials_context.c",
-                "src/sundials/sundials_datanode.c",
-                "src/sundials/sundials_dense.c",
-                "src/sundials/sundials_direct.c",
-                "src/sundials/sundials_domeigestimator.c",
-                "src/sundials/sundials_errors.c",
-                "src/sundials/sundials_futils.c",
-                "src/sundials/sundials_hashmap.c",
-                "src/sundials/sundials_iterative.c",
-                "src/sundials/sundials_linearsolver.c",
-                "src/sundials/sundials_logger.c",
-                "src/sundials/sundials_math.c",
-                "src/sundials/sundials_matrix.c",
-                "src/sundials/sundials_memory.c",
-                "src/sundials/sundials_nonlinearsolver.c",
-                "src/sundials/sundials_nvector.c",
-                "src/sundials/sundials_nvector_senswrapper.c",
-                "src/sundials/sundials_profiler.c",
-                "src/sundials/sundials_stepper.c",
-                "src/sundials/sundials_version.c",
+                "core/src/sundials/sundatanode/sundatanode_inmem.c",
+                "core/src/sundials/sundials_adaptcontroller.c",
+                "core/src/sundials/sundials_adjointcheckpointscheme.c",
+                "core/src/sundials/sundials_adjointstepper.c",
+                "core/src/sundials/sundials_band.c",
+                "core/src/sundials/sundials_cli.c",
+                "core/src/sundials/sundials_context.c",
+                "core/src/sundials/sundials_datanode.c",
+                "core/src/sundials/sundials_dense.c",
+                "core/src/sundials/sundials_direct.c",
+                "core/src/sundials/sundials_domeigestimator.c",
+                "core/src/sundials/sundials_errors.c",
+                "core/src/sundials/sundials_futils.c",
+                "core/src/sundials/sundials_hashmap.c",
+                "core/src/sundials/sundials_iterative.c",
+                "core/src/sundials/sundials_linearsolver.c",
+                "core/src/sundials/sundials_logger.c",
+                "core/src/sundials/sundials_math.c",
+                "core/src/sundials/sundials_matrix.c",
+                "core/src/sundials/sundials_memory.c",
+                "core/src/sundials/sundials_nonlinearsolver.c",
+                "core/src/sundials/sundials_nvector.c",
+                "core/src/sundials/sundials_nvector_senswrapper.c",
+                "core/src/sundials/sundials_profiler.c",
+                "core/src/sundials/sundials_stepper.c",
+                "core/src/sundials/sundials_version.c",
             },
         },
         .{
             .name = "sundials_sunmemsys",
-            .src_files = &.{"src/sunmemory/system/sundials_system_memory.c"},
+            .src_files = &.{"core/src/sunmemory/system/sundials_system_memory.c"},
         },
         .{
             .name = "sundials_sunmemvulkan",
-            .src_files = &.{"src/sunmemory/vulkan/sundials_vulkan_memory.cpp"},
+            .src_files = &.{"core/src/sunmemory/vulkan/sundials_vulkan_memory.cpp"},
         },
         .{
             .name = "sundials_nvecmanyvector",
-            .src_files = &.{"src/nvector/manyvector/nvector_manyvector.c"},
+            .src_files = &.{"core/src/nvector/manyvector/nvector_manyvector.c"},
         },
         .{
             .name = "sundials_nvecserial",
-            .src_files = &.{"src/nvector/serial/nvector_serial.c"},
+            .src_files = &.{"core/src/nvector/serial/nvector_serial.c"},
         },
         .{
             .name = "sundials_nvecpthreads",
-            .src_files = &.{"src/nvector/pthreads/nvector_pthreads.c"},
+            .src_files = &.{"core/src/nvector/pthreads/nvector_pthreads.c"},
         },
         .{
             .name = "sundials_nvecvulkan",
-            .src_files = &.{"src/nvector/vulkan/nvector_vulkan.cpp"},
+            .src_files = &.{"core/src/nvector/vulkan/nvector_vulkan.cpp"},
         },
         .{
             .name = "sundials_sunmatrixband",
-            .src_files = &.{"src/sunmatrix/band/sunmatrix_band.c"},
+            .src_files = &.{"core/src/sunmatrix/band/sunmatrix_band.c"},
         },
         .{
             .name = "sundials_sunmatrixsparse",
-            .src_files = &.{"src/sunmatrix/sparse/sunmatrix_sparse.c"},
+            .src_files = &.{"core/src/sunmatrix/sparse/sunmatrix_sparse.c"},
         },
         .{
             .name = "sundials_sunmatrixdense",
-            .src_files = &.{"src/sunmatrix/dense/sunmatrix_dense.c"},
+            .src_files = &.{"core/src/sunmatrix/dense/sunmatrix_dense.c"},
         },
         .{
             .name = "sundials_sunlinsolpcg",
-            .src_files = &.{"src/sunlinsol/pcg/sunlinsol_pcg.c"},
+            .src_files = &.{"core/src/sunlinsol/pcg/sunlinsol_pcg.c"},
         },
         .{
             .name = "sundials_sunlinsolspgmr",
-            .src_files = &.{"src/sunlinsol/spgmr/sunlinsol_spgmr.c"},
+            .src_files = &.{"core/src/sunlinsol/spgmr/sunlinsol_spgmr.c"},
         },
         .{
             .name = "sundials_sunlinsolsptfqmr",
-            .src_files = &.{"src/sunlinsol/sptfqmr/sunlinsol_sptfqmr.c"},
+            .src_files = &.{"core/src/sunlinsol/sptfqmr/sunlinsol_sptfqmr.c"},
         },
         .{
             .name = "sundials_sunlinsolspfgmr",
-            .src_files = &.{"src/sunlinsol/spfgmr/sunlinsol_spfgmr.c"},
+            .src_files = &.{"core/src/sunlinsol/spfgmr/sunlinsol_spfgmr.c"},
         },
         .{
             .name = "sundials_sunlinsolband",
-            .src_files = &.{"src/sunlinsol/band/sunlinsol_band.c"},
+            .src_files = &.{"core/src/sunlinsol/band/sunlinsol_band.c"},
         },
         .{
             .name = "sundials_sunlinsolspbcgs",
-            .src_files = &.{"src/sunlinsol/spbcgs/sunlinsol_spbcgs.c"},
+            .src_files = &.{"core/src/sunlinsol/spbcgs/sunlinsol_spbcgs.c"},
         },
         .{
             .name = "sundials_sunlinsoldense",
-            .src_files = &.{"src/sunlinsol/dense/sunlinsol_dense.c"},
+            .src_files = &.{"core/src/sunlinsol/dense/sunlinsol_dense.c"},
         },
         .{
             .name = "sunnonlinsol_fixedpoint",
-            .src_files = &.{"src/sunnonlinsol/fixedpoint/sunnonlinsol_fixedpoint.c"},
+            .src_files = &.{"core/src/sunnonlinsol/fixedpoint/sunnonlinsol_fixedpoint.c"},
         },
         .{
             .name = "sunnonlinsol_newton",
-            .src_files = &.{"src/sunnonlinsol/newton/sunnonlinsol_newton.c"},
+            .src_files = &.{"core/src/sunnonlinsol/newton/sunnonlinsol_newton.c"},
         },
         .{
             .name = "sundials_sunadaptcontrollersoderlind",
-            .src_files = &.{"src/sunadaptcontroller/soderlind/sunadaptcontroller_soderlind.c"},
+            .src_files = &.{"core/src/sunadaptcontroller/soderlind/sunadaptcontroller_soderlind.c"},
         },
         .{
             .name = "sundials_sunadaptcontrollermrihtol",
-            .src_files = &.{"src/sunadaptcontroller/mrihtol/sunadaptcontroller_mrihtol.c"},
+            .src_files = &.{"core/src/sunadaptcontroller/mrihtol/sunadaptcontroller_mrihtol.c"},
         },
         .{
             .name = "sundials_sunadaptcontrollerimexgus",
-            .src_files = &.{"src/sunadaptcontroller/imexgus/sunadaptcontroller_imexgus.c"},
+            .src_files = &.{"core/src/sunadaptcontroller/imexgus/sunadaptcontroller_imexgus.c"},
         },
         .{
             .name = "sundials_adjointcheckpointscheme_fixed",
-            .src_files = &.{"src/sunadjointcheckpointscheme/fixed/sunadjointcheckpointscheme_fixed.c"},
+            .src_files = &.{"core/src/sunadjointcheckpointscheme/fixed/sunadjointcheckpointscheme_fixed.c"},
         },
         .{
             .name = "sundials_sundomeigestpower",
-            .src_files = &.{"src/sundomeigest/power/sundomeigest_power.c"},
+            .src_files = &.{"core/src/sundomeigest/power/sundomeigest_power.c"},
         },
     }) catch @panic("OOM");
 
     if (features.with_klu) {
         sundials_components.append(b.allocator, .{
             .name = "sundials_sunlinsolklu",
-            .src_files = &.{"src/sunlinsol/klu/sunlinsol_klu.c"},
+            .src_files = &.{"core/src/sunlinsol/klu/sunlinsol_klu.c"},
         }) catch @panic("OOM");
     }
     if (features.with_lapack) {
         sundials_components.append(b.allocator, .{
             .name = "sundials_sunlinsollapackband",
-            .src_files = &.{"src/sunlinsol/lapackband/sunlinsol_lapackband.c"},
+            .src_files = &.{"core/src/sunlinsol/lapackband/sunlinsol_lapackband.c"},
         }) catch @panic("OOM");
         sundials_components.append(b.allocator, .{
             .name = "sundials_sunlinsollapackdense",
-            .src_files = &.{"src/sunlinsol/lapackdense/sunlinsol_lapackdense.c"},
+            .src_files = &.{"core/src/sunlinsol/lapackdense/sunlinsol_lapackdense.c"},
         }) catch @panic("OOM");
         sundials_components.append(b.allocator, .{
             .name = "sundials_sundomeigestarnoldi",
-            .src_files = &.{"src/sundomeigest/arnoldi/sundomeigest_arnoldi.c"},
+            .src_files = &.{"core/src/sundomeigest/arnoldi/sundomeigest_arnoldi.c"},
         }) catch @panic("OOM");
     }
     if (features.with_superlumt) {
         sundials_components.append(b.allocator, .{
             .name = "sundials_sunlinsolsuperlumt",
-            .src_files = &.{"src/sunlinsol/superlumt/sunlinsol_superlumt.c"},
+            .src_files = &.{"core/src/sunlinsol/superlumt/sunlinsol_superlumt.c"},
         }) catch @panic("OOM");
     }
 
@@ -481,39 +481,39 @@ pub fn build(b: *std.Build) !void {
     const arkode_lib = SundialsComponent{
         .name = "arkode",
         .src_files = &.{
-            "src/arkode/arkode_adapt.c",
-            "src/arkode/arkode_arkstep_io.c",
-            "src/arkode/arkode_arkstep_nls.c",
-            "src/arkode/arkode_arkstep.c",
-            "src/arkode/arkode_bandpre.c",
-            "src/arkode/arkode_bbdpre.c",
-            "src/arkode/arkode_butcher_dirk.c",
-            "src/arkode/arkode_butcher_erk.c",
-            "src/arkode/arkode_butcher.c",
-            "src/arkode/arkode_cli.c",
-            "src/arkode/arkode_erkstep_io.c",
-            "src/arkode/arkode_erkstep.c",
-            "src/arkode/arkode_forcingstep.c",
-            "src/arkode/arkode_interp.c",
-            "src/arkode/arkode_io.c",
-            "src/arkode/arkode_ls.c",
-            "src/arkode/arkode_lsrkstep_io.c",
-            "src/arkode/arkode_lsrkstep.c",
-            "src/arkode/arkode_mri_tables.c",
-            "src/arkode/arkode_mristep_controller.c",
-            "src/arkode/arkode_mristep_io.c",
-            "src/arkode/arkode_mristep_nls.c",
-            "src/arkode/arkode_mristep.c",
-            "src/arkode/arkode_relaxation.c",
-            "src/arkode/arkode_root.c",
-            "src/arkode/arkode_splittingstep_coefficients.c",
-            "src/arkode/arkode_splittingstep.c",
-            "src/arkode/arkode_sprkstep_io.c",
-            "src/arkode/arkode_sprkstep.c",
-            "src/arkode/arkode_sprk.c",
-            "src/arkode/arkode_sunstepper.c",
-            "src/arkode/arkode_user_controller.c",
-            "src/arkode/arkode.c",
+            "core/src/arkode/arkode_adapt.c",
+            "core/src/arkode/arkode_arkstep_io.c",
+            "core/src/arkode/arkode_arkstep_nls.c",
+            "core/src/arkode/arkode_arkstep.c",
+            "core/src/arkode/arkode_bandpre.c",
+            "core/src/arkode/arkode_bbdpre.c",
+            "core/src/arkode/arkode_butcher_dirk.c",
+            "core/src/arkode/arkode_butcher_erk.c",
+            "core/src/arkode/arkode_butcher.c",
+            "core/src/arkode/arkode_cli.c",
+            "core/src/arkode/arkode_erkstep_io.c",
+            "core/src/arkode/arkode_erkstep.c",
+            "core/src/arkode/arkode_forcingstep.c",
+            "core/src/arkode/arkode_interp.c",
+            "core/src/arkode/arkode_io.c",
+            "core/src/arkode/arkode_ls.c",
+            "core/src/arkode/arkode_lsrkstep_io.c",
+            "core/src/arkode/arkode_lsrkstep.c",
+            "core/src/arkode/arkode_mri_tables.c",
+            "core/src/arkode/arkode_mristep_controller.c",
+            "core/src/arkode/arkode_mristep_io.c",
+            "core/src/arkode/arkode_mristep_nls.c",
+            "core/src/arkode/arkode_mristep.c",
+            "core/src/arkode/arkode_relaxation.c",
+            "core/src/arkode/arkode_root.c",
+            "core/src/arkode/arkode_splittingstep_coefficients.c",
+            "core/src/arkode/arkode_splittingstep.c",
+            "core/src/arkode/arkode_sprkstep_io.c",
+            "core/src/arkode/arkode_sprkstep.c",
+            "core/src/arkode/arkode_sprk.c",
+            "core/src/arkode/arkode_sunstepper.c",
+            "core/src/arkode/arkode_user_controller.c",
+            "core/src/arkode/arkode.c",
         },
     };
     const arkode = sundials_add_library(
@@ -528,7 +528,7 @@ pub fn build(b: *std.Build) !void {
         arkode.root_module.linkLibrary(sundials_lib);
     }
     arkode.installHeader(config_header.getOutputFile(), "sundials/sundials_config.h");
-    arkode.installHeadersDirectory(b.path("include"), "", .{});
+    arkode.installHeadersDirectory(b.path("core/include"), "", .{});
     arkode.installLibraryHeaders(kompute_dep.artifact("kompute"));
     b.installArtifact(arkode);
     sundials_targets.append(b.allocator, arkode) catch @panic("OOM");
@@ -1804,7 +1804,7 @@ fn build_unit_tests(
 
         // adding include paths for utils needed by sundials unit test
         const main_src_file = unit_test.build_info.src_files[0];
-        exe.root_module.addIncludePath(b.path("src/"));
+        exe.root_module.addIncludePath(b.path("core/src/"));
         var iter = std.fs.path.componentIterator(main_src_file);
         _ = iter.next();
         var path_component = iter.next() orelse std.debug.panic("{s} is not a unit test?", .{main_src_file});

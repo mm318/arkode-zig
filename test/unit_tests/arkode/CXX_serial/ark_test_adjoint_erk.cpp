@@ -31,17 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <sundials/sundials_core.hpp>
-
-#include <nvector/nvector_manyvector.h>
-#include <nvector/nvector_serial.h>
-#include <sunadjointcheckpointscheme/sunadjointcheckpointscheme_fixed.h>
-#include <sundials/sundials_adjointstepper.h>
-#include <sunmatrix/sunmatrix_dense.h>
-#include <sunmemory/sunmemory_system.h>
-
-#include <arkode/arkode.h>
-#include <arkode/arkode_erkstep.h>
+#include <sundials_arkode.h>
 
 #include "problems/lotka_volterra.hpp"
 

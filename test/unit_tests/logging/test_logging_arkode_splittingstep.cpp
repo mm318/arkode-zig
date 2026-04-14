@@ -24,11 +24,7 @@
 #include <limits>
 
 // Include desired integrators and vectors
-#include "arkode/arkode_erkstep.h"
-#include "arkode/arkode_splittingstep.h"
-#include "nvector/nvector_serial.h"
-#include "sundials/sundials_context.hpp"
-#include "sundials/sundials_logger.h"
+#include <sundials_arkode.h>
 
 #include "problems/estep.hpp"
 #include "utilities/check_return.hpp"

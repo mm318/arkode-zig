@@ -14,8 +14,7 @@
  *-----------------------------------------------------------------*/
 
 #include <iostream>
-#include <sundials/sundials_core.hpp>
-#include <sunmemory/sunmemory_system.h>
+#include <sundials_arkode.h>
 
 static int test_instance(SUNMemoryHelper helper, SUNMemoryType mem_type,
                          bool print_test_status)

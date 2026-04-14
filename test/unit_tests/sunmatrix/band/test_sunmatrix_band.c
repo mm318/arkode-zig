@@ -21,13 +21,9 @@
  * -----------------------------------------------------------------
  */
 
-#include <nvector/nvector_serial.h>
+#include <sundials_arkode.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sundials/sundials_math.h>
-#include <sundials/sundials_types.h>
-#include <sunmatrix/sunmatrix_band.h>
-#include <sunmatrix/sunmatrix_dense.h>
 
 #include "test_sunmatrix.h"
 

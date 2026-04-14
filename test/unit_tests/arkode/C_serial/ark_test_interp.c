@@ -24,15 +24,11 @@
  * ---------------------------------------------------------------------------*/
 
 /* Header files */
-#include <arkode/arkode_arkstep.h>
+#include <sundials_arkode.h>
 #include <math.h>
-#include <nvector/nvector_serial.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sundials/sundials_math.h>
-#include <sunlinsol/sunlinsol_dense.h>
-#include <sunnonlinsol/sunnonlinsol_newton.h>
 
 #define NHVALS 9
 

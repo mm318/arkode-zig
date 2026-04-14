@@ -20,11 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "nvector/nvector_serial.h"
-#include "sundials/sundials_types.h"
-#include "sunlinsol/sunlinsol_dense.h"
-#include "sunmatrix/sunmatrix_dense.h"
-#include "sunnonlinsol/sunnonlinsol_newton.h"
+#include <sundials_arkode.h>
 
 #if defined(SUNDIALS_EXTENDED_PRECISION)
 #define GSYM "Lg"

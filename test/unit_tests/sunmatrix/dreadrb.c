@@ -127,8 +127,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <sundials/sundials_types.h>
-#include <sunmatrix/sunmatrix_sparse.h>
+#include <sundials_arkode.h>
 
 #ifdef SUNDIALS_INT64_T
 #define IFMT "%ld"

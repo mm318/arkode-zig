@@ -48,7 +48,7 @@
 #define KEPLER_HPP_
 
 #include <cmath>
-#include <sundials/sundials_core.hpp>
+#include <sundials_arkode.h>
 
 namespace problems {
 namespace kepler {

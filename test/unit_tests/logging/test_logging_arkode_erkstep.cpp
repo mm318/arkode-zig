@@ -24,10 +24,7 @@
 #include <limits>
 
 // Include desired integrators, vectors, linear solvers, and nonlinear solvers
-#include "arkode/arkode_erkstep.h"
-#include "nvector/nvector_serial.h"
-#include "sundials/sundials_context.hpp"
-#include "sundials/sundials_logger.h"
+#include <sundials_arkode.h>
 
 #include "problems/kpr.hpp"
 #include "utilities/check_return.hpp"

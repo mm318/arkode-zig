@@ -18,12 +18,9 @@
  * implementation.
  * -----------------------------------------------------------------*/
 
-#include <nvector/nvector_vulkan.h>
+#include <sundials_arkode.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sundials/sundials_math.h>
-#include <sundials/sundials_types.h>
-#include <sunmemory/sunmemory_vulkan.h>
 
 #include "test_nvector.h"
 

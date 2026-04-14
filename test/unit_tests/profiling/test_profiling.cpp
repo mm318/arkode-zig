@@ -22,9 +22,7 @@
 #include <string>
 #include <thread>
 
-#include "sundials/sundials_math.h"
-#include "sundials/sundials_profiler.h"
-#include "sundials/sundials_types.h"
+#include <sundials_arkode.h>
 
 static int sleep(SUNProfiler prof, int sec, double* chrono)
 {
