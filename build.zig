@@ -373,6 +373,7 @@ pub fn build(b: *std.Build) !void {
     kompute_log_level = kompute.LogLevel.parse(log_level_str, optimize);
 
     const config_header = configHeader(b, target, optimize, features) catch @panic("OOM");
+    const arkode_c_module = create_arkode_c_module(b, target, optimize, config_header);
 
     var sundials_components = std.ArrayList(SundialsComponent).initCapacity(b.allocator, 64) catch @panic("OOM");
     defer sundials_components.deinit(b.allocator);
@@ -602,6 +603,16 @@ pub fn build(b: *std.Build) !void {
     arkode.installHeadersDirectory(b.path("extensions/vulkan_real/include"), "", .{});
     arkode.installLibraryHeaders(kompute_dep.artifact("kompute"));
     b.installArtifact(arkode);
+
+    const arkode_zig_module = b.addModule("arkode-zig", .{
+        .root_source_file = b.path("arkode.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    arkode_zig_module.addImport("arkode-c", arkode_c_module);
+    arkode_zig_module.linkLibrary(arkode);
+
     sundials_targets.append(b.allocator, arkode) catch @panic("OOM");
 
     build_examples(b, target, optimize, features, config_header, arkode, &sundials_targets);

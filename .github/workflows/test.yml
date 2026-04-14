@@ -9,7 +9,7 @@ on:
     - cron: '0 13 * * *' # run at UTC 1 pm
 
 env:
-  ZIG_VERSION: 0.15.2
+  ZIG_VERSION: 0.16.0
   SLANG_VERSION: 2025.23.1
 
 jobs:

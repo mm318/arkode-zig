@@ -27,13 +27,13 @@ nonlinear solver APIs used across SUNDIALS packages.
 
 ## Installation ##
 
-Add the dependency in your `build.zig.zon` by running the following command:
+Add the dependency in your `build.zig.zon`:
 
 ```
 zig fetch --save=arkode_zig https://github.com/mm318/arkode-zig/archive/refs/heads/main.tar.gz
 ```
 
-Then, in your `build.zig`:
+Then expose the public Zig module from your `build.zig`:
 
 ```
 const std = @import("std");
@@ -42,21 +42,40 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const arkode_dep = b.dependency("arkode_zig", .{
+    const arkode_zig_dep = b.dependency("arkode_zig", .{
         .target = target,
         .optimize = optimize,
     });
-    const arkode_artifact = arkode_dep.artifact("arkode");
+    const arkode_zig_mod = arkode_zig_dep.module("arkode-zig");
+
+    const exe_mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    exe_mod.addImport("arkode-zig", arkode_zig_mod);
 
     const your_exe = b.addExecutable(.{
-        .target = target,
-        .optimize = optimize,
-        // your other options...
+        .name = "your-app",
+        .root_module = exe_mod,
     });
-    your_exe.addIncludePath(arkode_artifact.getEmittedIncludeTree());
-    your_exe.linkLibrary(arkode_artifact);
+
+    b.installArtifact(your_exe);
 }
 ```
+
+Then import it from Zig code:
+
+```
+const arkode_zig = @import("arkode-zig");
+```
+
+The package dependency name and exported module name intentionally use different spellings:
+
+- dependency name in `build.zig.zon`: `arkode_zig`
+- public module exported by this package: `arkode-zig`
+- import name in your project: `arkode-zig`
 
 ## Contributing ##
 
