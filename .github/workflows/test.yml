@@ -51,6 +51,11 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
+      - name: Prepare Zig cache directories
+        run: |
+          mkdir -p "$ZIG_GLOBAL_CACHE_DIR/tmp"
+          mkdir -p "$ZIG_LOCAL_CACHE_DIR/tmp"
+
       - name: Check formatting
         run:  |
           zig fmt --check .
